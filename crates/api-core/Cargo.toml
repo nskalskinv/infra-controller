@@ -113,6 +113,7 @@ lazy_static = { workspace = true }
 libredfish = { workspace = true }
 librms = { workspace = true }
 mac_address = { workspace = true }
+moka = { workspace = true }
 num_cpus = { workspace = true }
 nv-redfish = { workspace = true }
 opentelemetry = { workspace = true, features = ["logs"] }

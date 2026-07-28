@@ -170,6 +170,10 @@ pub struct ExpectedMachineJson {
     /// Per-host lifecycle profile for settings that affect state-machine progression.
     #[serde(default)]
     pub host_lifecycle_profile: Option<HostLifecycleProfile>,
+    /// Operator pinned Redfish BMC vendor, a `RedfishVendor` variant name such as
+    /// `Dell`. Absent or empty means automatic detection.
+    #[serde(default)]
+    pub bmc_vendor_override: Option<String>,
 }
 
 impl ExpectedMachineJson {

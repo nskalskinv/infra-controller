@@ -108,6 +108,7 @@ use crate::mqtt_state_change_hook::hook::MqttStateChangeHook;
 use crate::mqtt_state_change_hook::republisher::{
     ManagedHostStateRepublisher, ManagedHostStateRepublisherParams,
 };
+use crate::redfish_vendor_override::DbBmcVendorOverrideResolver;
 use crate::scout_stream::ConnectionRegistry;
 use crate::{CarbideError, attestation, db_init, ethernet_virtualization, listener};
 
@@ -135,6 +136,7 @@ pub fn create_ipmi_tool(
 fn create_redfish_pool(
     carbide_config: &CarbideConfig,
     credential_manager: Arc<dyn CredentialManager>,
+    db_pool: PgPool,
 ) -> eyre::Result<Arc<dyn RedfishClientPool>> {
     let pool = libredfish::RedfishClientPool::builder()
         .danger_accept_invalid_certs()
@@ -183,6 +185,9 @@ fn create_redfish_pool(
         credential_manager,
         pool,
         carbide_config.site_explorer.bmc_proxy.clone(),
+        // Supplies the per BMC operator vendor pin to every client this pool
+        // builds, so no call site has to resolve it itself.
+        Arc::new(DbBmcVendorOverrideResolver::new(db_pool)),
     ))
 }
 
@@ -203,7 +208,8 @@ pub(crate) async fn start_runtime(
     cancel_token: CancellationToken,
     ready_channel: Sender<()>,
 ) -> eyre::Result<()> {
-    let shared_redfish_pool = create_redfish_pool(&carbide_config, credential_manager.clone())?;
+    let shared_redfish_pool =
+        create_redfish_pool(&carbide_config, credential_manager.clone(), db_pool.clone())?;
     let shared_nv_redfish_pool =
         carbide_redfish::nv_redfish::new_pool(carbide_config.site_explorer.bmc_proxy.clone());
 

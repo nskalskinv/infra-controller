@@ -932,6 +932,7 @@ impl ApiClient {
         bmc_ip_allocation: Option<::rpc::forge::BmcIpAllocationType>,
         host_lifecycle_profile: Option<::rpc::forge::HostLifecycleProfile>,
         interfaces: Option<String>,
+        bmc_vendor_override: Option<String>,
     ) -> Result<(), CarbideCliError> {
         let get_req = match (bmc_mac_address, id) {
             (Some(_), Some(_)) => {
@@ -1030,6 +1031,9 @@ impl ApiClient {
             replace_host_nics: replace_interfaces,
             host_lifecycle_profile: host_lifecycle_profile
                 .or(expected_machine.host_lifecycle_profile),
+            // Patch semantics. Use the flag when given, where an empty string
+            // clears the override, and otherwise keep the stored value.
+            bmc_vendor_override: bmc_vendor_override.or(expected_machine.bmc_vendor_override),
         };
 
         Ok(self.0.update_expected_machine(request).await?)
@@ -1075,6 +1079,7 @@ impl ApiClient {
                             disable_lockdown: hlp.disable_lockdown,
                         }
                     }),
+                    bmc_vendor_override: machine.bmc_vendor_override,
                 })
                 .collect(),
         };

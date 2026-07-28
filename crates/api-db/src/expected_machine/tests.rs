@@ -200,6 +200,7 @@ async fn test_duplicate_fail_create(pool: sqlx::PgPool) -> Result<(), Box<dyn st
                 dpu_policy: Default::default(),
                 bmc_ip_allocation: Default::default(),
                 host_lifecycle_profile: Default::default(),
+                bmc_vendor_override: None,
             },
         },
     )

@@ -17,7 +17,8 @@ nico-admin-cli-expected-machine-add - Add expected machine
 \[**--default_pause_ingestion_and_poweron**\] \[**--dpf-enabled**\]
 \[**--extended**\] \[**--bmc-ip-address**\]
 \[**--bmc-retain-credentials**\] \[**--dpu-policy**\]
-\[**--disable-lockdown**\] \[**--sort-by**\] \[**-h**\|**--help**\]
+\[**--bmc-ip-allocation**\] \[**--disable-lockdown**\]
+\[**--bmc-vendor-override**\] \[**--sort-by**\] \[**-h**\|**--help**\]
 
 ## DESCRIPTION
 
@@ -65,7 +66,8 @@ Optional unique ID to assign to the ExpectedMachine on create
 
 **--host_nics** *\<HOST_NICS\>*  
 Host NICs as a JSON array of ExpectedHostNic objects (fields:
-mac_address, nic_type, fixed_ip, fixed_mask, fixed_gateway, primary)
+mac_address, network_segment_type, fixed_ip, fixed_mask, fixed_gateway,
+primary; legacy: nic_type)
 
 **--rack_id** *\<RACK_ID\>*  
 Rack ID for this machine
@@ -73,9 +75,9 @@ Rack ID for this machine
 **--default_pause_ingestion_and_poweron** *\<DEFAULT_PAUSE_INGESTION_AND_POWERON\>*  
 Optional flag to pause machines ingestion and power on. False - dont
 pause, true - will pause it. The actual mutable state is stored in
-explored_endpoints.\
+explored_endpoints.  
 
-\
+  
 *Possible values:*
 
 - true
@@ -83,9 +85,9 @@ explored_endpoints.\
 - false
 
 **--dpf-enabled** *\<DPF_ENABLED\>*  
-DPF enable/disable for this machine. Default is updated as true.\
+DPF enable/disable for this machine. Default is updated as true.  
 
-\
+  
 *Possible values:*
 
 - true
@@ -105,25 +107,25 @@ as expected switches)
 
 **--bmc-retain-credentials** *\<BMC_RETAIN_CREDENTIALS\>*  
 When true, site-explorer skips BMC password rotation and stores
-factory-default credentials in Vault as-is\
+factory-default credentials in Vault as-is  
 
-\
+  
 *Possible values:*
 
 - true
 
 - false
 
-**--dpu-policy** *\<DPU_POLICY\>*\
+**--dpu-policy** *\<DPU_POLICY\>*  
 Per-host DPU policy. \`manage\` (default): inherit the site policy,
-which defaults to managing DPUs; \`nic\`: configure DPU hardware
-as plain NICs; \`ignore\`: do not configure or attach DPU hardware.
-Unset defers to the site-wide \`\[site_explorer\] dpu_policy\` setting.
-The previous \`use-as-nic\` value remains accepted as an alias. The legacy
-\`--dpu-mode\` flag also remains accepted: \`dpu-mode\` maps to \`manage\`,
-\`nic-mode\` to \`nic\`, and \`no-dpu\` to \`ignore\`.\
+which defaults to managing DPUs; \`nic\`: configure DPU hardware as
+plain NICs; \`ignore\`: do not configure or attach DPU hardware. Unset
+defers to the site-wide \`\[site_explorer\] dpu_policy\` setting. The
+previous \`use-as-nic\` value remains accepted as an alias. The legacy
+\`--dpu-mode\` flag also remains accepted: \`dpu-mode\` maps to
+\`manage\`, \`nic-mode\` to \`nic\`, and \`no-dpu\` to \`ignore\`.  
 
-\
+  
 *Possible values:*
 
 - manage
@@ -132,22 +134,55 @@ The previous \`use-as-nic\` value remains accepted as an alias. The legacy
 
 - ignore
 
+**--bmc-ip-allocation** *\<BMC_IP_ALLOCATION\>*  
+Per-host control over how this BMCs IP is assigned and retained.
+\`auto\` (default): infer from \`--bmc-ip-address\` -- a configured
+address is \`fixed\`, no address is \`retained\`; \`dynamic\`: a normal
+DHCP lease that may expire and change; \`fixed\`: the operator-specified
+\`--bmc-ip-address\` (static); \`retained\`: an auto-allocated address
+pinned as static (never expires). Unset defers to the server default
+(\`auto\`).  
+
+  
+*Possible values:*
+
+- unspecified
+
+- auto
+
+- dynamic
+
+- fixed
+
+- retained
+
 **--disable-lockdown** *\<DISABLE_LOCKDOWN\>*  
 If true, do not lock down the server as part of lifecycle management
 within the state machine. If unset or false, preserve the default
-behavior of locking down the server after configuring the BIOS.\
+behavior of locking down the server after configuring the BIOS.  
 
-\
+  
 *Possible values:*
 
 - true
 
 - false
 
-**--sort-by** *\<SORT_BY\>* \[default: primary-id\]  
-Sort output by specified field\
+**--bmc-vendor-override** *\<BMC_VENDOR_OVERRIDE\>*  
+Pin the Redfish BMC vendor for this host. Once set it governs how NICo
+talks to this BMC -- which libredfish driver each Redfish client
+dispatches on, the vendor recorded by Site Explorer, and therefore the
+firmware config lookup, the IPMI-vs-Redfish restart choice and the BMC
+console transport. Host lifecycle decisions keyed to the host's own DMI
+data are unaffected. A RedfishVendor variant name, case-sensitive (e.g.
+Dell, Supermicro, NvidiaDpu, Hpe, Lenovo). Unset means automatic
+detection. Not applied to credential rotation or factory bootstrap,
+which must reach a BMC before its vendor is usable.
 
-\
+**--sort-by** *\<SORT_BY\>* \[default: primary-id\]  
+Sort output by specified field  
+
+  
 *Possible values:*
 
 - primary-id: Sort by the primary id
@@ -164,6 +199,7 @@ nico-admin-cli expected-machine add --bmc-mac-address 00:11:22:33:44:55 --bmc-us
 nico-admin-cli expected-machine add --bmc-mac-address 00:11:22:33:44:55 --bmc-username admin --bmc-password mypassword --chassis-serial-number sample_serial-1 --meta-name MyMachine --label DATACENTER:XYZ --sku-id DGX-H100-640GB
 nico-admin-cli expected-machine add --bmc-mac-address 00:11:22:33:44:55 --bmc-username admin --bmc-password mypassword --chassis-serial-number sample_serial-1 --bmc-ip-address 192.0.2.20
 nico-admin-cli expected-machine add --bmc-mac-address 00:11:22:33:44:55 --bmc-username admin --bmc-password mypassword --chassis-serial-number sample_serial-1 --dpu-policy nic
+nico-admin-cli expected-machine add --bmc-mac-address 00:11:22:33:44:55 --bmc-username admin --bmc-password mypassword --chassis-serial-number sample_serial-1 --bmc-ip-allocation retained
 ```
 
 ---

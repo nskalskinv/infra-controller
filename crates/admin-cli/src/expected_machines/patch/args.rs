@@ -52,6 +52,7 @@ use crate::expected_machines::common::HostDpuPolicy;
 "bmc_ip_allocation",
 "dpf_enabled",
 "interfaces",
+"bmc_vendor_override",
 ])))]
 #[command(after_long_help = "\
 EXAMPLES:
@@ -84,6 +85,14 @@ fixed IP. The omitted role and allocation policy keep their stored values:
 Reset that role to Host and infer Fixed allocation from fixed_ip:
     $ nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 \
     --interfaces '[{\"mac_address\":\"02:00:00:00:20:01\",\"role\":\"unspecified\",\"ip_allocation\":\"unspecified\",\"fixed_ip\":\"192.0.2.10\"}]'
+
+Pin the Redfish BMC vendor for a host:
+    $ nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 \
+    --bmc-vendor-override Dell
+
+Clear the Redfish BMC vendor override (return to automatic detection):
+    $ nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 \
+    --bmc-vendor-override \"\"
 
 ")]
 pub struct Args {
@@ -228,6 +237,14 @@ pub struct Args {
         help = "If true, do not lock down the server as part of lifecycle management within the state machine. If unset or false, preserve the default behavior of locking down the server after configuring the BIOS."
     )]
     pub disable_lockdown: Option<bool>,
+
+    #[clap(
+        long = "bmc-vendor-override",
+        value_name = "BMC_VENDOR_OVERRIDE",
+        group = "group",
+        help = "Pin the Redfish BMC vendor for this host. Once set it governs how NICo talks to this BMC -- which libredfish driver each Redfish client dispatches on, the vendor recorded by Site Explorer, and therefore the firmware config lookup, the IPMI-vs-Redfish restart choice and the BMC console transport. Host lifecycle decisions keyed to the host's own DMI data are unaffected. A RedfishVendor variant name, case-sensitive (e.g. Dell, Supermicro, NvidiaDpu, Hpe, Lenovo). Redfish clients pick it up within a minute; the recorded vendor changes at the next successful exploration. Pass an empty string to clear the override (return to automatic detection). Not applied to credential rotation or factory bootstrap, which must reach a BMC before its vendor is usable."
+    )]
+    pub bmc_vendor_override: Option<String>,
 }
 
 impl Args {
@@ -256,8 +273,9 @@ impl Args {
             && self.dpu_policy.is_none()
             && self.bmc_ip_allocation.is_none()
             && self.interfaces.is_none()
+            && self.bmc_vendor_override.is_none()
         {
-            return Err(CarbideCliError::GenericError("one of the following options must be specified: bmc-username and bmc-password or chassis-serial-number or fallback-dpu-serial-number or sku-id or rack-id or bmc-ip-address or dpu-policy or bmc-ip-allocation or dpf-enabled or interfaces".to_string()));
+            return Err(CarbideCliError::GenericError("one of the following options must be specified: bmc-username and bmc-password or chassis-serial-number or fallback-dpu-serial-number or sku-id or rack-id or bmc-ip-address or dpu-policy or bmc-ip-allocation or dpf-enabled or interfaces or bmc-vendor-override".to_string()));
         }
         if self
             .fallback_dpu_serial_numbers

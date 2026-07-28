@@ -199,6 +199,13 @@ pub struct Args {
         help = "If true, do not lock down the server as part of lifecycle management within the state machine. If unset or false, preserve the default behavior of locking down the server after configuring the BIOS."
     )]
     pub disable_lockdown: Option<bool>,
+
+    #[clap(
+        long = "bmc-vendor-override",
+        value_name = "BMC_VENDOR_OVERRIDE",
+        help = "Pin the Redfish BMC vendor for this host. Once set it governs how NICo talks to this BMC -- which libredfish driver each Redfish client dispatches on, the vendor recorded by Site Explorer, and therefore the firmware config lookup, the IPMI-vs-Redfish restart choice and the BMC console transport. Host lifecycle decisions keyed to the host's own DMI data are unaffected. A RedfishVendor variant name, case-sensitive (e.g. Dell, Supermicro, NvidiaDpu, Hpe, Lenovo). Unset means automatic detection. Not applied to credential rotation or factory bootstrap, which must reach a BMC before its vendor is usable."
+    )]
+    pub bmc_vendor_override: Option<String>,
 }
 
 impl Args {
@@ -252,6 +259,7 @@ impl TryFrom<Args> for rpc::forge::ExpectedMachine {
                     disable_lockdown: Some(dl),
                 }
             }),
+            bmc_vendor_override: value.bmc_vendor_override,
         })
     }
 }

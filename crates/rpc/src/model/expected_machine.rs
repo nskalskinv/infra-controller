@@ -364,6 +364,7 @@ impl From<ExpectedMachine> for rpc::forge::ExpectedMachine {
                         .host_lifecycle_profile
                         .disable_lockdown,
                 }),
+            bmc_vendor_override: expected_machine.data.bmc_vendor_override,
         }
     }
 }
@@ -498,6 +499,12 @@ impl TryFrom<rpc::forge::ExpectedMachine> for ExpectedMachineData {
                     disable_lockdown: hlp.disable_lockdown,
                 })
                 .unwrap_or_default(),
+            // An empty proto string clears the override, matching an empty value
+            // passed to the CLI flag.
+            bmc_vendor_override: match em.bmc_vendor_override.as_deref() {
+                None | Some("") => None,
+                Some(_) => em.bmc_vendor_override,
+            },
         })
     }
 }

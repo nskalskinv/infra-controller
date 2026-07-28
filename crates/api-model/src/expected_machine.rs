@@ -810,6 +810,12 @@ pub struct ExpectedMachineData {
     /// knobs should be added here rather than as new flat columns.
     #[serde(default)]
     pub host_lifecycle_profile: HostLifecycleProfile,
+    /// Operator pinned Redfish BMC vendor for this host, a `RedfishVendor` variant
+    /// name such as `Dell`, forced into libredfish instead of detection. Absent or
+    /// empty means automatic detection. NICo keeps no vendor list of its own and
+    /// lets libredfish match the name.
+    #[serde(default)]
+    pub bmc_vendor_override: Option<String>,
 }
 // Important : new fields for expected machine (and data) should be optional _and_ serde(default),
 // unless you want to go update all the files in each production deployment that autoload
@@ -886,6 +892,7 @@ impl<'r> FromRow<'r, PgRow> for ExpectedMachine {
                 host_lifecycle_profile: row
                     .try_get::<sqlx::types::Json<HostLifecycleProfile>, _>("host_lifecycle_profile")
                     .map(|j| j.0)?,
+                bmc_vendor_override: row.try_get("bmc_vendor_override")?,
             },
         })
     }

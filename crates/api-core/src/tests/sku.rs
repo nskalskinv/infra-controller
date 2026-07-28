@@ -871,6 +871,7 @@ pub mod tests {
                     dpu_policy: Default::default(),
                     bmc_ip_allocation: Default::default(),
                     host_lifecycle_profile: Default::default(),
+                    bmc_vendor_override: None,
                 },
             },
         )
@@ -967,6 +968,7 @@ pub mod tests {
                     dpu_policy: Default::default(),
                     bmc_ip_allocation: Default::default(),
                     host_lifecycle_profile: Default::default(),
+                    bmc_vendor_override: None,
                 },
             },
         )
@@ -1038,6 +1040,7 @@ pub mod tests {
                     dpu_policy: Default::default(),
                     bmc_ip_allocation: Default::default(),
                     host_lifecycle_profile: Default::default(),
+                    bmc_vendor_override: None,
                 },
             },
         )
@@ -1126,6 +1129,7 @@ pub mod tests {
                     dpu_policy: Default::default(),
                     bmc_ip_allocation: Default::default(),
                     host_lifecycle_profile: Default::default(),
+                    bmc_vendor_override: None,
                 },
             },
         )
@@ -1571,6 +1575,7 @@ pub mod tests {
                     dpu_policy: Default::default(),
                     bmc_ip_allocation: Default::default(),
                     host_lifecycle_profile: Default::default(),
+                    bmc_vendor_override: None,
                 },
             },
         )

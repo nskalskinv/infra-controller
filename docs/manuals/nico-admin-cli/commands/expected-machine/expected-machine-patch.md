@@ -18,7 +18,9 @@ update, preserves unprovided fields).
 \[**--rack-id**\] \[**--default_pause_ingestion_and_poweron**\]
 \[**--dpf-enabled**\] \[**--bmc-ip-address**\] \[**--extended**\]
 \[**--bmc-retain-credentials**\] \[**--dpu-policy**\]
-\[**--disable-lockdown**\] \[**--sort-by**\] \[**-h**\|**--help**\]
+\[**--bmc-ip-allocation**\] \[**--host_nics**\]
+\[**--disable-lockdown**\] \[**--bmc-vendor-override**\]
+\[**--sort-by**\] \[**-h**\|**--help**\]
 
 ## DESCRIPTION
 
@@ -79,9 +81,9 @@ A RACK ID that will be added for the newly created Machine.
 **--default_pause_ingestion_and_poweron** *\<DEFAULT_PAUSE_INGESTION_AND_POWERON\>*  
 Optional flag to pause machines ingestion and power on. False - dont
 pause, true - will pause it. The actual mutable state is stored in
-explored_endpoints.\
+explored_endpoints.  
 
-\
+  
 *Possible values:*
 
 - true
@@ -89,9 +91,9 @@ explored_endpoints.\
 - false
 
 **--dpf-enabled** *\<DPF_ENABLED\>*  
-DPF enable/disable for this machine. Default is updated as true.\
+DPF enable/disable for this machine. Default is updated as true.  
 
-\
+  
 *Possible values:*
 
 - true
@@ -111,25 +113,25 @@ internal UUIDs that are used to associate instances.
 
 **--bmc-retain-credentials** *\<BMC_RETAIN_CREDENTIALS\>*  
 When true, site-explorer skips BMC password rotation and stores
-factory-default credentials in Vault as-is\
+factory-default credentials in Vault as-is  
 
-\
+  
 *Possible values:*
 
 - true
 
 - false
 
-**--dpu-policy** *\<DPU_POLICY\>*\
+**--dpu-policy** *\<DPU_POLICY\>*  
 Per-host DPU policy. \`manage\`: inherit the site policy, which defaults
 to managing DPUs; \`nic\`: configure DPU hardware as plain NICs;
 \`ignore\`: do not configure or attach DPU hardware. Unset preserves the
-existing per-host value. The previous \`use-as-nic\` value remains accepted
-as an alias. The legacy \`--dpu-mode\` flag also remains accepted:
-\`dpu-mode\` maps to \`manage\`, \`nic-mode\` to \`nic\`, and \`no-dpu\`
-to \`ignore\`.\
+existing per-host value. The previous \`use-as-nic\` value remains
+accepted as an alias. The legacy \`--dpu-mode\` flag also remains
+accepted: \`dpu-mode\` maps to \`manage\`, \`nic-mode\` to \`nic\`, and
+\`no-dpu\` to \`ignore\`.  
 
-\
+  
 *Possible values:*
 
 - manage
@@ -138,22 +140,62 @@ to \`ignore\`.\
 
 - ignore
 
+**--bmc-ip-allocation** *\<BMC_IP_ALLOCATION\>*  
+Per-host control over how this BMCs IP is assigned and retained.
+\`auto\` (default): infer from \`--bmc-ip-address\` -- a configured
+address is \`fixed\`, no address is \`retained\`; \`dynamic\`: a normal
+DHCP lease that may expire and change; \`fixed\`: the operator-specified
+\`--bmc-ip-address\` (static); \`retained\`: an auto-allocated address
+pinned as static (never expires). Unset preserves the existing per-host
+value.  
+
+  
+*Possible values:*
+
+- unspecified
+
+- auto
+
+- dynamic
+
+- fixed
+
+- retained
+
+**--host_nics** *\<HOST_NICS\>*  
+Host NICs as a JSON array of ExpectedHostNic objects (fields:
+mac_address, network_segment_type, fixed_ip, fixed_mask, fixed_gateway,
+primary; legacy: nic_type). Replaces the machines full host NIC list.
+
 **--disable-lockdown** *\<DISABLE_LOCKDOWN\>*  
 If true, do not lock down the server as part of lifecycle management
 within the state machine. If unset or false, preserve the default
-behavior of locking down the server after configuring the BIOS.\
+behavior of locking down the server after configuring the BIOS.  
 
-\
+  
 *Possible values:*
 
 - true
 
 - false
 
-**--sort-by** *\<SORT_BY\>* \[default: primary-id\]  
-Sort output by specified field\
+**--bmc-vendor-override** *\<BMC_VENDOR_OVERRIDE\>*  
+Pin the Redfish BMC vendor for this host. Once set it governs how NICo
+talks to this BMC -- which libredfish driver each Redfish client
+dispatches on, the vendor recorded by Site Explorer, and therefore the
+firmware config lookup, the IPMI-vs-Redfish restart choice and the BMC
+console transport. Host lifecycle decisions keyed to the host's own DMI
+data are unaffected. A RedfishVendor variant name, case-sensitive (e.g.
+Dell, Supermicro, NvidiaDpu, Hpe, Lenovo). Redfish clients pick it up
+within a minute; the recorded vendor changes at the next successful
+exploration. Pass an empty string to clear the override (return to
+automatic detection). Not applied to credential rotation or factory
+bootstrap, which must reach a BMC before its vendor is usable.
 
-\
+**--sort-by** *\<SORT_BY\>* \[default: primary-id\]  
+Sort output by specified field  
+
+  
 *Possible values:*
 
 - primary-id: Sort by the primary id
@@ -170,6 +212,9 @@ nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 --sku-
 nico-admin-cli expected-machine patch --id 12345678-1234-5678-90ab-cdef01234567 --sku-id DGX-H100-640GB
 nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 --bmc-username admin --bmc-password mynewpassword
 nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 --dpu-policy ignore
+nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 --bmc-ip-allocation retained
+nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 --bmc-vendor-override Dell
+nico-admin-cli expected-machine patch --bmc-mac-address 00:11:22:33:44:55 --bmc-vendor-override ""
 ```
 
 ---

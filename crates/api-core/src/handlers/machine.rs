@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use ::rpc::errors::RpcDataConversionError;
 use ::rpc::forge as rpc;
 use ::rpc::model::machine::ManagedHostStateSnapshotRpc;
-use carbide_redfish::libredfish::RedfishAuth;
+use carbide_redfish::libredfish::{RedfishAuth, VendorSelection};
 use carbide_secrets::credentials::{BmcCredentialType, CredentialKey, Credentials};
 use carbide_uuid::machine::MachineId;
 use libredfish::SystemPowerControl;
@@ -515,7 +515,7 @@ pub(crate) async fn admin_force_delete_machine(
                         RedfishAuth::Key(CredentialKey::BmcCredentials {
                             credential_type: BmcCredentialType::BmcRoot { bmc_mac_address },
                         }),
-                        None,
+                        VendorSelection::Detect,
                     )
                     .await
                 {

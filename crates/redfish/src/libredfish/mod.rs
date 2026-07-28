@@ -24,6 +24,8 @@ pub mod dpu_bios;
 pub mod error;
 #[cfg(feature = "test-support")]
 pub mod test_support;
+pub mod vendor_override;
+pub mod vendor_selection;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -38,6 +40,8 @@ use carbide_utils::redfish::BmcAccessInfo;
 pub use error::RedfishClientCreationError;
 use libredfish::Redfish;
 use libredfish::model::service_root::RedfishVendor;
+pub use vendor_override::{BmcVendorOverrideResolver, NoBmcVendorOverrides, VendorOverrideError};
+pub use vendor_selection::VendorSelection;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, LabelValue)]
 enum DpuUefiPasswordSetupSkipReason {
@@ -99,15 +103,21 @@ fn emit_dpu_uefi_password_setup_skipped_if_needed(
     true
 }
 
+/// Builds the production client pool.
+///
+/// `vendor_override_resolver` supplies the per BMC operator vendor pin. Pass
+/// [`NoBmcVendorOverrides`] to opt out explicitly.
 pub fn new_pool(
     credential_reader: Arc<dyn CredentialReader>,
     pool: libredfish::RedfishClientPool,
     proxy_address: Arc<ArcSwap<Option<HostPortPair>>>,
+    vendor_override_resolver: Arc<dyn BmcVendorOverrideResolver>,
 ) -> Arc<dyn RedfishClientPool> {
     Arc::new(implementation::RedfishClientPoolImpl::new(
         credential_reader,
         pool,
         proxy_address,
+        vendor_override_resolver,
     ))
 }
 
@@ -117,20 +127,25 @@ pub trait RedfishClientPool: Send + Sync + 'static {
     // MARK: - Required methods
 
     /// Creates a new Redfish client for a Machines BMC.
-    /// `host` is the IP address or hostname of the BMC.
-    /// `vendor` allows you to pre-assign the underlying
-    /// RedfishVendor to use for the client, saving the
-    /// service root call to auto-detect the vendor.
+    ///
+    /// Every BMC client is built here, which is what lets an operator vendor pin
+    /// apply everywhere without each call site resolving it.
     async fn create_client(
         &self,
         host: &str,
         port: Option<u16>,
         auth: RedfishAuth,
-        vendor: Option<RedfishVendor>,
+        vendor: VendorSelection,
     ) -> Result<Box<dyn Redfish>, RedfishClientCreationError>;
 
     /// Returns a CredentialReader for use in setting credentials in the UEFI/BMC.
     fn credential_reader(&self) -> &dyn CredentialReader;
+
+    /// The operator pinned vendor for this BMC, or `None` for detection.
+    ///
+    /// For callers needing the pin as a value rather than a client. They read it
+    /// here so none can disagree with the vendor `create_client` applied.
+    async fn pinned_bmc_vendor(&self, host: &str) -> Option<RedfishVendor>;
 
     // MARK: - Default (helper) methods
 
@@ -143,7 +158,7 @@ pub trait RedfishClientPool: Send + Sync + 'static {
                 &bmc_ip_address.ip().to_string(),
                 Some(bmc_ip_address.port()),
                 RedfishAuth::Anonymous,
-                Some(RedfishVendor::Unknown),
+                VendorSelection::Uninitialized,
             )
             .await?;
 
@@ -155,6 +170,10 @@ pub trait RedfishClientPool: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Builds a client for a BMC described by a [`BmcAccessInfo`].
+    ///
+    /// Asks for detection rather than resolving the pin here. The pin is applied
+    /// inside `create_client`, so this path and every other one share it.
     async fn client_by_info(
         &self,
         access: &BmcAccessInfo,
@@ -163,7 +182,7 @@ pub trait RedfishClientPool: Send + Sync + 'static {
             &access.host,
             access.port,
             RedfishAuth::for_bmc_mac(access.mac_address),
-            None,
+            VendorSelection::Detect,
         )
         .await
     }
@@ -327,7 +346,7 @@ pub trait RedfishClientPool: Send + Sync + 'static {
                 host,
                 port,
                 RedfishAuth::Direct(curr_user.clone(), curr_password.clone()),
-                Some(RedfishVendor::Unknown),
+                VendorSelection::Uninitialized,
             )
             .await?;
 
@@ -417,7 +436,7 @@ pub trait RedfishClientPool: Send + Sync + 'static {
                 host,
                 port,
                 RedfishAuth::Direct(curr_user.to_string(), new_password),
-                Some(vendor),
+                VendorSelection::Hint(vendor),
             )
             .await?;
 
@@ -446,7 +465,7 @@ pub trait RedfishClientPool: Send + Sync + 'static {
                 host,
                 port,
                 RedfishAuth::Direct(root_user.clone(), root_password.clone()),
-                Some(RedfishVendor::Unknown),
+                VendorSelection::Uninitialized,
             )
             .await?;
 
@@ -496,7 +515,7 @@ pub trait RedfishClientPool: Send + Sync + 'static {
                 host,
                 port,
                 RedfishAuth::Direct(username, password),
-                Some(RedfishVendor::Unknown),
+                VendorSelection::Uninitialized,
             )
             .await?;
 
@@ -532,7 +551,7 @@ pub trait RedfishClientPool: Send + Sync + 'static {
                 host,
                 port,
                 RedfishAuth::Anonymous,
-                Some(RedfishVendor::Unknown),
+                VendorSelection::Uninitialized,
             )
             .await?;
 
@@ -547,7 +566,12 @@ pub trait RedfishClientPool: Send + Sync + 'static {
         // shelves) that don't expose a recognized vendor in the service root.
         let Credentials::UsernamePassword { username, password } = credentials;
         let client = self
-            .create_client(host, port, RedfishAuth::Direct(username, password), None)
+            .create_client(
+                host,
+                port,
+                RedfishAuth::Direct(username, password),
+                VendorSelection::Detect,
+            )
             .await?;
 
         let chassis_ids = client
@@ -882,7 +906,7 @@ mod tests {
                 RedfishAuth::Key(CredentialKey::HostRedfish {
                     credential_type: CredentialType::SiteDefault,
                 }),
-                None,
+                VendorSelection::Detect,
             )
             .await
             .unwrap();
@@ -901,7 +925,7 @@ mod tests {
                 RedfishAuth::Key(CredentialKey::HostRedfish {
                     credential_type: CredentialType::SiteDefault,
                 }),
-                None,
+                VendorSelection::Detect,
             )
             .await
             .unwrap();
@@ -948,6 +972,68 @@ mod tests {
             .into_iter()
             .map(|call| call.vendor)
             .collect()
+    }
+
+    /// `client_by_info` is the shared entry point for BMC clients, so the pin has
+    /// to arrive at `create_client` as the forced vendor. It asks for detection
+    /// and the pool applies the pin, covering every other detecting call site.
+    #[tokio::test]
+    async fn client_by_info_applies_the_operator_pin() {
+        const HOST: &str = "127.0.0.1";
+
+        async fn vendor_passed_for(pin: Option<RedfishVendor>) -> Option<RedfishVendor> {
+            let sim = RedfishSim::default();
+            if let Some(pin) = pin {
+                sim.set_vendor_override(HOST, pin);
+            }
+            let access = BmcAccessInfo {
+                host: HOST.to_string(),
+                port: Some(443),
+                mac_address: mac_address::MacAddress::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01]),
+            };
+
+            sim.client_by_info(&access).await.expect("sim client");
+
+            let calls = sim.create_client_calls();
+            assert_eq!(calls.len(), 1, "one client per client_by_info call");
+            assert_eq!(
+                calls[0].selection,
+                VendorSelection::Detect,
+                "client_by_info must delegate the pin to the pool, not resolve it itself"
+            );
+            calls[0].vendor
+        }
+
+        assert_eq!(
+            vendor_passed_for(Some(RedfishVendor::Dell)).await,
+            Some(RedfishVendor::Dell),
+            "a pinned vendor must reach create_client"
+        );
+        assert_eq!(
+            vendor_passed_for(None).await,
+            None,
+            "no pin leaves automatic detection in place"
+        );
+    }
+
+    /// A pin must not apply to any BMC other than the one it was set on.
+    #[tokio::test]
+    async fn operator_pin_is_scoped_to_its_own_host() {
+        let sim = RedfishSim::default();
+        sim.set_vendor_override("127.0.0.1", RedfishVendor::Dell);
+
+        let access = BmcAccessInfo {
+            host: "127.0.0.2".to_string(),
+            port: Some(443),
+            mac_address: mac_address::MacAddress::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x02]),
+        };
+        sim.client_by_info(&access).await.expect("sim client");
+
+        assert_eq!(
+            sim.create_client_calls()[0].vendor,
+            None,
+            "an unpinned BMC must still auto-detect"
+        );
     }
 
     #[tokio::test]

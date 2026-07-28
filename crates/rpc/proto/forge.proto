@@ -6343,6 +6343,11 @@ message ExpectedMachine {
   // host_nics, including `[]`; older clients leave it false so an unknown
   // nested HostBmc is not removed by a read-modify-write.
   bool replace_host_nics = 19;
+  // Operator-pinned Redfish BMC vendor for this host. When set, it is passed to
+  // libredfish as the forced vendor instead of detection from the service root.
+  // Empty or unset means automatic detection. Holds a `RedfishVendor` variant
+  // name (e.g. "Dell").
+  optional string bmc_vendor_override = 20;
 }
 
 message ExpectedMachineRequest {

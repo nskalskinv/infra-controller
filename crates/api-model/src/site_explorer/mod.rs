@@ -64,7 +64,10 @@ pub struct EndpointExplorationReport {
     /// The time it took to explore the endpoint in the last site explorer run
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_exploration_latency: Option<std::time::Duration>,
-    /// Vendor as reported by Redfish
+    /// The BMC vendor, either what Redfish reported or the operator pin.
+    ///
+    /// The value the rest of NICo acts on, selecting the firmware key, the restart
+    /// path and the console transport, so a pin has to win here too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vendor: Option<bmc_vendor::BMCVendor>,
     /// `Managers` reported by Redfish

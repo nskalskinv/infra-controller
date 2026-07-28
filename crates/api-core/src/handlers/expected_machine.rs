@@ -169,8 +169,37 @@ pub(crate) fn validate_expected_machine_for_insert(
         .bmc_ip_allocation
         .validate(machine.data.bmc_ip_address.is_some())
         .map_err(|msg| CarbideError::InvalidArgument(msg.to_string()))?;
+    validate_bmc_vendor_override(machine)?;
 
     Ok(())
+}
+
+/// Reject a `bmc_vendor_override` libredfish could not use, so a typo fails the
+/// write rather than being stored as a pin that never applies. `Unknown` is
+/// refused too, being the pool sentinel for an uninitialized client. An empty
+/// string means no pin and is accepted, since the JSON import can carry one.
+fn validate_bmc_vendor_override(machine: &ExpectedMachine) -> Result<(), CarbideError> {
+    use libredfish::model::service_root::RedfishVendor;
+
+    let Some(name) = machine
+        .data
+        .bmc_vendor_override
+        .as_deref()
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(());
+    };
+
+    match carbide_redfish::libredfish::conv::redfish_vendor_from_str(name) {
+        Some(vendor) if vendor != RedfishVendor::Unknown => Ok(()),
+        _ => Err(CarbideError::InvalidArgument(format!(
+            // xtask:allow-error-case: the vendor spellings are case-sensitive values
+            "bmc_vendor_override {name:?} is not a usable Redfish vendor name, \
+             which is the exact case-sensitive variant spelling \
+             such as \"Dell\", \"Supermicro\" or \"NvidiaDpu\". Pass an empty \
+             string to clear the override and fall back to automatic detection"
+        ))),
+    }
 }
 
 /// Create missing expected_machines that aren't already in the database,
@@ -1373,5 +1402,43 @@ mod tests {
         assert_eq!(replacement.host_nics[0].primary, Some(true));
         let parsed: ExpectedMachineData = replacement.try_into().unwrap();
         assert!(validate_expected_interface_role_and_allocation(&parsed.interfaces).is_err());
+    }
+
+    /// A pin libredfish cannot use has to fail the write. Storing it would leave
+    /// an operator believing the vendor is pinned while every client keeps
+    /// detecting, with only a server side warn to say otherwise.
+    #[test]
+    fn bmc_vendor_override_rejects_names_libredfish_cannot_use() {
+        fn validate(stored: Option<&str>) -> Result<(), CarbideError> {
+            validate_bmc_vendor_override(&ExpectedMachine {
+                id: None,
+                bmc_mac_address: "02:00:00:00:00:01".parse().expect("valid test MAC"),
+                data: ExpectedMachineData {
+                    bmc_vendor_override: stored.map(str::to_string),
+                    ..Default::default()
+                },
+            })
+        }
+
+        assert!(validate(None).is_ok(), "no pin is always valid");
+        assert!(
+            validate(Some("")).is_ok(),
+            "an empty string clears the pin, expected_machines.json can carry it \
+             literally, and failing it would bail API startup"
+        );
+        assert!(validate(Some("Dell")).is_ok(), "an exact variant name");
+        assert!(
+            validate(Some("NvidiaDpu")).is_ok(),
+            "a multi-word variant name"
+        );
+
+        // Case matters, so the near miss an operator is most likely to type has
+        // to be rejected rather than silently stored.
+        assert!(validate(Some("dell")).is_err(), "wrong case");
+        assert!(validate(Some("Del")).is_err(), "typo");
+        assert!(
+            validate(Some("Unknown")).is_err(),
+            "the uninitialized-client sentinel is not a pinnable vendor"
+        );
     }
 }

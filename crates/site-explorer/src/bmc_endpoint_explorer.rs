@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use crate::redfish::ResolvedVendor;
 use bmc_explorer::Product;
 use carbide_ipmi::IPMITool;
 use carbide_redfish::boot_interface::BootInterfaceTarget;
@@ -285,7 +286,47 @@ impl BmcEndpointExplorer {
             .await
     }
 
+    /// Produce the exploration report, then let an operator pin override the
+    /// vendor the BMC reported.
+    ///
+    /// Applied after the mode dispatch, the only layer knowing pin from probe.
     pub async fn generate_exploration_report(
+        &self,
+        bmc_ip_address: SocketAddr,
+        credentials: Credentials,
+        boot_interface: Option<&BootInterfaceTarget>,
+        vendor: Option<ResolvedVendor>,
+    ) -> Result<EndpointExplorationReport, EndpointExplorationError> {
+        let client_vendor = vendor.map(ResolvedVendor::vendor);
+        let report = self
+            .generate_reported_exploration_report(
+                bmc_ip_address,
+                credentials,
+                boot_interface,
+                client_vendor,
+            )
+            .await;
+
+        let Some(pin) = vendor.and_then(ResolvedVendor::pinned) else {
+            return report;
+        };
+        report.map(|mut report| {
+            let pinned = carbide_redfish::libredfish::conv::bmc_vendor(pin);
+            if report.vendor != Some(pinned) {
+                tracing::info!(
+                    %bmc_ip_address,
+                    reported = ?report.vendor,
+                    %pinned,
+                    redfish_vendor = %pin,
+                    "Recording the operator-pinned BMC vendor instead of the reported one"
+                );
+            }
+            report.vendor = Some(pinned);
+            report
+        })
+    }
+
+    async fn generate_reported_exploration_report(
         &self,
         bmc_ip_address: SocketAddr,
         credentials: Credentials,
@@ -676,62 +717,83 @@ impl EndpointExplorer for BmcEndpointExplorer {
         }
 
         let bmc_mac_address = interface.mac_address;
-        let vendor = match self.redfish_client.get_redfish_vendor(bmc_ip_address).await {
-            Ok(vendor) => vendor,
-            Err(e) => {
-                tracing::error!(
+
+        // An operator pinned vendor replaces detection outright, which is the
+        // whole point of the override. Read from the client pool rather than from
+        // `expected` so this value and the vendor every client for this BMC
+        // dispatches on can never disagree.
+        let resolved_vendor = match self.redfish_client.pinned_bmc_vendor(bmc_ip_address).await {
+            Some(vendor) => {
+                // Debug rather than info, because this runs for a pinned BMC on
+                // every exploration iteration and the log further below was
+                // demoted for that same reason in #4149.
+                tracing::debug!(
                     %bmc_ip_address,
-                    error = %e,
-                    "Failed to probe Redfish service root endpoint"
+                    %bmc_mac_address,
+                    %vendor,
+                    "Using operator-pinned BMC vendor, skipping service root detection"
                 );
+                ResolvedVendor::Pinned(vendor)
+            }
+            None => match self.redfish_client.get_redfish_vendor(bmc_ip_address).await {
+                Ok(vendor) => ResolvedVendor::Detected(vendor),
+                Err(e) => {
+                    tracing::error!(
+                        %bmc_ip_address,
+                        error = %e,
+                        "Failed to probe Redfish service root endpoint"
+                    );
 
-                // Lite-On power shelf BMCs don't expose Vendor details in the
-                // service root, so we fall back to probing the Chassis endpoint.
-                // Only attempt this for power shelf endpoints — machines and
-                // switches should never need this workaround.
-                //
-                // In the future, if we want to expand this to other kinds of trays we can
-                // expand the pattern matching logic below.
-                let Some(ExpectedEntity::PowerShelf(eps)) = expected else {
-                    return Err(e);
-                };
-
-                let (username, password) =
-                    match self.get_bmc_root_credentials(bmc_mac_address).await {
-                        Ok(Credentials::UsernamePassword { username, password }) => {
-                            (username, password)
-                        }
-                        Err(_) => (eps.bmc_username.clone(), eps.bmc_password.clone()),
+                    // Lite-On power shelf BMCs don't expose Vendor details in the
+                    // service root, so we fall back to probing the Chassis endpoint.
+                    // Only attempt this for power shelf endpoints — machines and
+                    // switches should never need this workaround.
+                    //
+                    // In the future, if we want to expand this to other kinds of trays we can
+                    // expand the pattern matching logic below.
+                    let Some(ExpectedEntity::PowerShelf(eps)) = expected else {
+                        return Err(e);
                     };
 
-                // Lite-On and Delta power shelf BMCs don't expose vendor
-                // details in the service root, so we fall back to checking the
-                // Manufacturer field across all Chassis entries.
-                let vendor = match self
-                    .redfish_client
-                    .probe_vendor_name_from_chassis(bmc_ip_address, username, password)
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(chassis_err) => {
-                        tracing::error!(
-                            %bmc_ip_address,
-                            error = %chassis_err,
-                            "Failed to probe vendor from chassis"
-                        );
+                    let (username, password) =
+                        match self.get_bmc_root_credentials(bmc_mac_address).await {
+                            Ok(Credentials::UsernamePassword { username, password }) => {
+                                (username, password)
+                            }
+                            Err(_) => (eps.bmc_username.clone(), eps.bmc_password.clone()),
+                        };
+
+                    // Lite-On and Delta power shelf BMCs don't expose vendor
+                    // details in the service root, so we fall back to checking the
+                    // Manufacturer field across all Chassis entries.
+                    let vendor = match self
+                        .redfish_client
+                        .probe_vendor_name_from_chassis(bmc_ip_address, username, password)
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(chassis_err) => {
+                            tracing::error!(
+                                %bmc_ip_address,
+                                error = %chassis_err,
+                                "Failed to probe vendor from chassis"
+                            );
+                            return Err(e);
+                        }
+                    };
+                    let vendor_lc = vendor.to_lowercase();
+                    if vendor_lc.contains("lite-on") {
+                        ResolvedVendor::Detected(RedfishVendor::LiteOnPowerShelf)
+                    } else if vendor_lc.contains("delta") {
+                        ResolvedVendor::Detected(RedfishVendor::DeltaPowerShelf)
+                    } else {
                         return Err(e);
                     }
-                };
-                let vendor_lc = vendor.to_lowercase();
-                if vendor_lc.contains("lite-on") {
-                    RedfishVendor::LiteOnPowerShelf
-                } else if vendor_lc.contains("delta") {
-                    RedfishVendor::DeltaPowerShelf
-                } else {
-                    return Err(e);
                 }
-            }
+            },
         };
+
+        let vendor = resolved_vendor.vendor();
 
         tracing::debug!(
             target: "carbide_diagnostics::bmc_redfish_supported",
@@ -752,7 +814,7 @@ impl EndpointExplorer for BmcEndpointExplorer {
                         bmc_ip_address,
                         credentials,
                         boot_interface,
-                        Some(vendor),
+                        Some(resolved_vendor),
                     )
                     .await
                 {
@@ -917,7 +979,7 @@ impl EndpointExplorer for BmcEndpointExplorer {
                     bmc_ip_address,
                     bmc_credentials,
                     boot_interface,
-                    Some(vendor),
+                    Some(resolved_vendor),
                 )
                 .await?
             }
@@ -1869,6 +1931,138 @@ mod tests {
             .map_err(|error| error.to_string())?;
 
         Ok(sim.machine_setup_status_targets(&bmc_ip_address.ip().to_string()))
+    }
+
+    /// Explore a host whose service root reports `service_root_vendor`, with `pin`
+    /// seeded as the operator override.
+    ///
+    /// Returns the vendor every client used and the vendor the report recorded.
+    async fn explore_with_vendor_pin(
+        service_root_vendor: Option<&str>,
+        pin: Option<RedfishVendor>,
+    ) -> Result<(Vec<Option<RedfishVendor>>, EndpointExplorationReport), String> {
+        let sim = Arc::new(RedfishSim::default());
+        sim.set_service_root_vendor(service_root_vendor.map(str::to_string));
+        sim.seed_user("root", "factory-password");
+        let bmc_ip_address: SocketAddr = "127.0.0.1:443".parse().expect("valid test BMC address");
+        if let Some(pin) = pin {
+            // Seeded on the pool, where production reads it from, so this
+            // exercises the same path rather than a test only shortcut.
+            sim.set_vendor_override(&bmc_ip_address.ip().to_string(), pin);
+        }
+        let proxy_address = Arc::new(ArcSwap::new(Arc::new(None)));
+        let explorer = BmcEndpointExplorer::new(
+            sim.clone(),
+            Arc::new(NvRedfishClientPool::new(proxy_address)),
+            carbide_ipmi::test_support(),
+            Arc::new(TestCredentialManager::default()),
+            Arc::new(AtomicBool::new(false)),
+            SiteExplorerExploreMode::LibRedfish,
+            None,
+        );
+        let bmc_mac_address: MacAddress = "02:00:00:00:00:02".parse().expect("valid test BMC MAC");
+        let interface = MachineInterfaceSnapshot::mock_with_mac(bmc_mac_address);
+        let expected = ExpectedEntity::Machine(ExpectedMachine {
+            id: None,
+            bmc_mac_address,
+            data: ExpectedMachineData {
+                bmc_username: "root".to_string(),
+                bmc_password: "factory-password".to_string(),
+                serial_number: "vendor-pin-host".to_string(),
+                bmc_retain_credentials: Some(true),
+                ..Default::default()
+            },
+        });
+
+        let report = explorer
+            .explore_endpoint(bmc_ip_address, &interface, Some(&expected), None, None)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        Ok((
+            sim.create_client_calls()
+                .into_iter()
+                .map(|call| call.vendor)
+                .collect(),
+            report,
+        ))
+    }
+
+    /// The motivating case for the override, a BMC whose service root does not
+    /// identify it at all. Detection alone fails that host outright, so the pin
+    /// has to rescue the exploration, reach the client, and land in the persisted
+    /// report, which is what console access and firmware selection read.
+    #[tokio::test]
+    async fn explore_endpoint_honors_a_pinned_vendor_when_detection_fails() {
+        const UNIDENTIFIABLE: Option<&str> = Some("TotallyNotAKnownVendor");
+
+        let detected_only = explore_with_vendor_pin(UNIDENTIFIABLE, None).await;
+        assert!(
+            detected_only.is_err(),
+            "an unidentifiable BMC must fail exploration without a pin, got {detected_only:?}"
+        );
+
+        let (client_vendors, report) =
+            explore_with_vendor_pin(UNIDENTIFIABLE, Some(RedfishVendor::Dell))
+                .await
+                .expect("a pinned vendor should carry the exploration past detection");
+        assert!(
+            client_vendors.contains(&Some(RedfishVendor::Dell)),
+            "the pinned vendor must reach create_client, got {client_vendors:?}"
+        );
+        assert_eq!(
+            report.vendor,
+            Some(bmc_vendor::BMCVendor::Dell),
+            "the pin must be what gets persisted; the BMC reported nothing usable"
+        );
+    }
+
+    /// A pin outranks what the BMC reports, so an operator can also correct a
+    /// host that misidentifies itself and not only one that stays silent.
+    #[tokio::test]
+    async fn explore_endpoint_prefers_a_pinned_vendor_over_detection() {
+        let (client_vendors, report) =
+            explore_with_vendor_pin(Some("Nvidia"), Some(RedfishVendor::Dell))
+                .await
+                .expect("exploration should succeed");
+        assert!(
+            client_vendors.contains(&Some(RedfishVendor::Dell)),
+            "the pin must win over the detected vendor, got {client_vendors:?}"
+        );
+        assert_eq!(
+            report.vendor,
+            Some(bmc_vendor::BMCVendor::Dell),
+            "the pin must overwrite the vendor the BMC reported, not just the client"
+        );
+
+        let (client_vendors, report) = explore_with_vendor_pin(Some("Nvidia"), None)
+            .await
+            .expect("exploration should succeed");
+        assert!(
+            !client_vendors.contains(&Some(RedfishVendor::Dell)),
+            "without a pin nothing should force Dell, got {client_vendors:?}"
+        );
+        assert_eq!(
+            report.vendor,
+            Some(bmc_vendor::BMCVendor::Nvidia),
+            "an unpinned host must keep recording what it reported"
+        );
+    }
+
+    /// The pin is stored as a `RedfishVendor` name but persisted as the coarser
+    /// `BMCVendor`, so the mapping is part of the contract. Pinning a Lenovo GB300
+    /// records `LenovoAMI`, which the firmware key and console transport use.
+    #[tokio::test]
+    async fn a_pinned_vendor_is_persisted_through_the_bmc_vendor_mapping() {
+        let (_, report) = explore_with_vendor_pin(Some("Nvidia"), Some(RedfishVendor::LenovoGB300))
+            .await
+            .expect("exploration should succeed");
+        assert_eq!(report.vendor, Some(bmc_vendor::BMCVendor::LenovoAMI));
+
+        // The persisted spelling and not just the enum, because the report JSON
+        // and the `desired_firmware` join both compare this string.
+        let wire = serde_json::to_value(&report).expect("report serializes");
+        assert_eq!(wire["Vendor"], serde_json::json!("LenovoAMI"));
     }
 
     #[tokio::test]
