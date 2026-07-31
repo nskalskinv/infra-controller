@@ -149,13 +149,11 @@ nicocli operating-system create --data-file - <<'EOF'
     {
       "name": "kernel",
       "url": "https://artifacts.example.com/ubuntu/vmlinuz",
-      "sha": "<optional-sha256>",
       "cacheStrategy": "CacheAsNeeded"
     },
     {
       "name": "initrd",
       "url": "https://artifacts.example.com/ubuntu/initrd",
-      "sha": "<optional-sha256>",
       "cacheStrategy": "CacheAsNeeded"
     }
   ],
@@ -205,6 +203,18 @@ returned by NICo REST. Core's cache-management gRPC operations are the only
 supported way to set or clear it. A `CachedOnly` artifact without a cached URL
 keeps the Core definition from becoming ready.
 
+After a cache service has downloaded an artifact, a Site administrator can
+record its Site-local URL directly in Core:
+
+```bash
+nico-admin-cli operating-system set-cached-url \
+  --set kernel=https://cache.example.com/ubuntu/vmlinuz \
+  <operating-system-uuid>
+```
+
+Repeat `--set` for multiple artifacts. Use `--set <name>=` to clear a cached
+URL.
+
 ## Create a Site-Local Definition in Core
 
 The REST API is the preferred interface for normal operations. A Site
@@ -238,9 +248,20 @@ Capture the returned Operating System UUID and inspect it:
 nicocli operating-system get <operating-system-uuid>
 ```
 
-The response contains the aggregate `status`, `statusHistory`, and
-`siteAssociations`. Wait for the target Site association to become `Synced`
-before selecting the Operating System for an Instance.
+This response contains the definition, aggregate `status`, and `statusHistory`.
+The get-by-ID response does not currently expand Site associations for
+Templated iPXE definitions. Use the Site-filtered list response to inspect the
+association:
+
+```bash
+nicocli operating-system list \
+  --site-id <site-uuid> \
+  --type TemplatedIpxe \
+  --all
+```
+
+Wait for the target `siteAssociations` entry to become `Synced` before
+selecting the Operating System for an Instance.
 
 Common association states are:
 
@@ -311,8 +332,7 @@ nicocli operating-system delete <operating-system-uuid>
 
 REST marks the definition and its Site association as deleting, asks Core to
 remove the Site copy, and records an actionable error state if Site cleanup
-fails. Do not delete a definition that is still referenced by workload
-automation.
+fails. Deletion is rejected while an Instance references the definition.
 
 ## Synchronization and Source of Truth
 
