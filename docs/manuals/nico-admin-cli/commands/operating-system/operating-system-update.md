@@ -71,7 +71,9 @@ Update the cloud-init / user-data script.
 Update the raw iPXE boot script.
 
 **--ipxe-template-id** *\<IPXE_TEMPLATE_ID\>*  
-Update the iPXE template ID.
+Update the iPXE template ID. See
+[Templated iPXE Operating Systems](../../../../configuration/templated-ipxe-operating-systems.md)
+for template requirements, artifact configuration, and synchronization rules.
 
 **--param** \[*\<KEY=VALUE\>...*\]  
 Replace all iPXE parameters with these KEY=VALUE pairs. May be repeated.

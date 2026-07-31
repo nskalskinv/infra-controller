@@ -10,7 +10,7 @@ definition.
 ## SYNOPSIS
 
 **nico-admin-cli operating-system create** \<**-n**\|**--name**\>
-\<**-o**\|**--org**\> \[**--id**\] \[**-d**\|**--description**\]
+\[**-o**\|**--org**\] \[**--id**\] \[**-d**\|**--description**\]
 \[**--is-active**\] \[**--allow-override**\]
 \[**--phone-home-enabled**\] \[**--user-data**\] \[**--ipxe-script**\]
 \[**--ipxe-template-id**\] \[**--param**\] \[**--extended**\]
@@ -26,7 +26,8 @@ Create a new operating system definition.
 Name of the operating system definition.
 
 **-o**, **--org** *\<ORG\>*  
-Organization identifier for this OS definition.
+Optional Tenant organization identifier for this OS definition. Omit it for a
+provider-owned definition. An explicitly empty value is invalid.
 
 **--id** *\<ID\>*  
 Optional UUID for the new OS definition (default: server-generated).
@@ -63,7 +64,9 @@ Optional cloud-init / user-data script.
 Raw iPXE boot script (mutually exclusive with --ipxe-template-id).
 
 **--ipxe-template-id** *\<IPXE_TEMPLATE_ID\>*  
-ID of the iPXE template to use (mutually exclusive with --ipxe-script).
+ID of the iPXE template to use (mutually exclusive with --ipxe-script). See
+[Templated iPXE Operating Systems](../../../../configuration/templated-ipxe-operating-systems.md)
+for template requirements, artifact configuration, and synchronization rules.
 
 **--param** *\<KEY=VALUE\>*  
 iPXE parameter in KEY=VALUE format. May be repeated.
@@ -91,8 +94,9 @@ Print help (see a summary with -h)
 ## Examples
 
 ```sh
-nico-admin-cli operating-system create --name ubuntu-22.04 --org fds34511233a
-nico-admin-cli operating-system create --name ubuntu-22.04 --org fds34511233a --description "Ubuntu 22.04 base" --is-active false --allow-override
+nico-admin-cli operating-system create --name provider-ubuntu-22.04
+nico-admin-cli operating-system create --name tenant-ubuntu-22.04 --org fds34511233a
+nico-admin-cli operating-system create --name tenant-ubuntu-22.04 --org fds34511233a --description "Ubuntu 22.04 base" --is-active false --allow-override
 ```
 
 ---
