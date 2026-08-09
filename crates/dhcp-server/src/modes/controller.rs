@@ -14,24 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::str::FromStr;
 
-use ::rpc::forge::DhcpDiscovery;
+use ::rpc::forge::{DhcpDiscovery, MessageKind};
 use carbide_dhcp_common::VendorClass;
 use lru::LruCache;
 use rpc::forge::DhcpRecord;
 use tokio::sync::Mutex;
 use tonic::async_trait;
 
-use super::DhcpMode;
+use super::{DhcpMode, V6Outcome, v6_message_kind};
 use crate::Config;
 use crate::cache::{self, CacheEntry};
 use crate::errors::DhcpError;
 use crate::rpc::client::discover_dhcp;
 
 #[derive(Debug)]
-pub(crate) struct Controller {}
+pub struct Controller {}
 
 #[async_trait]
 impl DhcpMode for Controller {
@@ -98,5 +98,34 @@ impl DhcpMode for Controller {
         );
 
         Ok(record)
+    }
+
+    /// Resolve DHCPv6 through the authoritative Forge API and v6-local cache.
+    async fn discover_dhcp_v6(
+        &self,
+        discovery_request: DhcpDiscovery,
+        config: &Config,
+        machine_cache: &mut std::sync::Arc<Mutex<LruCache<String, CacheEntry>>>,
+    ) -> Result<V6Outcome, DhcpError> {
+        let message_kind = v6_message_kind(&discovery_request)?;
+
+        // Information-only and stateful API responses have different address
+        // shapes, so do not let an options-only response poison the stateful cache.
+        if message_kind == MessageKind::V6InfoRequest {
+            let record = discover_dhcp(discovery_request, config).await?;
+            // Information-only exchanges never gain IA_NA merely because the
+            // API also knows a stateful address for this interface.
+            return Ok(V6Outcome::OptionsOnly(record));
+        }
+
+        let record = self
+            .discover_dhcp(discovery_request, config, machine_cache)
+            .await?;
+        if record.address.is_empty() {
+            return Ok(V6Outcome::NoAddress);
+        }
+
+        record.address.parse::<Ipv6Addr>()?;
+        Ok(V6Outcome::Stateful(record))
     }
 }

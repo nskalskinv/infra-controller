@@ -87,7 +87,7 @@ fn scrape_metrics(endpoint: SocketAddr) -> Option<String> {
 /// Return the parsed DHCPv6 dropped-request counter value for a reason label.
 #[allow(dead_code)]
 fn drop_counter_value(metrics: &str, reason: &str) -> f64 {
-    let prefix = format!("carbide_dropped_v6_requests_total{{reason=\"{reason}\"}} ");
+    let prefix = format!("carbide_dhcp_v6_requests_dropped_total{{reason=\"{reason}\"}} ");
     metrics
         .lines()
         .filter_map(|line| line.strip_prefix(&prefix))
