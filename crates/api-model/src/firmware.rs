@@ -150,6 +150,21 @@ impl Firmware {
                 return matching_inventory.version.clone();
             };
         }
+
+        // See `EndpointExplorationReport::system_bios_version`: Lenovo GB300
+        // publishes the host UEFI version only on ComputerSystem.BiosVersion.
+        if firmware_type == FirmwareComponentType::Uefi
+            && let Some(version) = report.system_bios_version()
+        {
+            tracing::debug!(
+                machine_id = ?report.machine_id,
+                ?firmware_type,
+                %version,
+                "Using ComputerSystem.BiosVersion for UEFI version",
+            );
+            return Some(version.clone());
+        }
+
         None
     }
 }
@@ -444,6 +459,44 @@ impl Display for AgentUpgradePolicyChoice {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `parse_versions` reaches UEFI through this method, so the GB300 fallback
+    /// has to live here too or `report.versions` never gets a Uefi key and
+    /// site-explorer's BMC+UEFI gate skips the DB write entirely. Issue #4628.
+    #[test]
+    fn find_version_falls_back_to_system_bios_version_for_uefi() {
+        let mut components = HashMap::new();
+        components.insert(
+            FirmwareComponentType::Uefi,
+            FirmwareComponent {
+                current_version_reported_as: Some(Regex::new("^UEFI").unwrap()),
+                ..FirmwareComponent::default()
+            },
+        );
+        let fw_info = Firmware {
+            components,
+            ..Firmware::default()
+        };
+
+        let report = EndpointExplorationReport {
+            systems: vec![crate::site_explorer::ComputerSystem {
+                id: "System_0".to_string(),
+                bios_version: Some("LFO102M-1.10".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            fw_info.find_version(&report, FirmwareComponentType::Uefi),
+            Some("LFO102M-1.10".to_string()),
+        );
+        // Only UEFI falls back; BMC must not borrow the BIOS string.
+        assert_eq!(
+            fw_info.find_version(&report, FirmwareComponentType::Bmc),
+            None,
+        );
+    }
 
     #[test]
     fn artifact_count_prefers_files_then_legacy_fields() {

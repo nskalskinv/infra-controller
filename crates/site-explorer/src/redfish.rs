@@ -930,6 +930,16 @@ async fn fetch_system(client: &dyn Redfish) -> Result<FetchedSystem, EndpointExp
             .ok(),
     };
 
+    // Lenovo GB300 lists only the BMC in FirmwareInventory and reports the host
+    // UEFI version here. Mirror the nv-redfish explorer so both backends feed
+    // the same field. Blank values are dropped.
+    let bios_version = system
+        .bios_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string);
+
     Ok(FetchedSystem {
         system: ComputerSystem {
             ethernet_interfaces,
@@ -946,6 +956,7 @@ async fn fetch_system(client: &dyn Redfish) -> Result<FetchedSystem, EndpointExp
             power_state: system.power_state.into_model(),
             sku: system.sku,
             boot_order,
+            bios_version,
         },
         is_dpu,
         is_host: !(is_dpu || is_switch || is_powershelf),

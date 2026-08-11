@@ -50,6 +50,27 @@ async fn explore_lenovo_gb300() {
     assert!(!report.systems.is_empty(), "systems must be present");
     assert!(!report.chassis.is_empty(), "chassis must be present");
 
+    // Regression for #4628: GB300 does not list UEFI in FirmwareInventory, so
+    // the host UEFI version has to come from ComputerSystem.BiosVersion.
+    let system = report.systems.first().expect("system must be present");
+    assert_eq!(system.bios_version.as_deref(), Some("LFO102M-1.10"));
+    assert_eq!(
+        report.system_bios_version(),
+        Some(&"LFO102M-1.10".to_string()),
+    );
+
+    // Pin the premise: if a future mock change starts listing UEFI here, this
+    // test would silently stop exercising the fallback.
+    let inventory_ids = report
+        .get_inventory_map()
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
+    assert!(
+        !inventory_ids.contains(&"UEFI"),
+        "GB300 must not expose UEFI via FirmwareInventory: {inventory_ids:?}",
+    );
+
     let lockdown = report
         .lockdown_status
         .expect("GB300 lockdown status must be populated");

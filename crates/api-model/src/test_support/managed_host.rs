@@ -309,6 +309,7 @@ impl From<ManagedHostConfig> for EndpointExplorationReport {
                 power_state: PowerState::On,
                 sku: None,
                 boot_order: None,
+                bios_version: None,
             }],
             chassis: vec![Chassis {
                 id: "System.Embedded.1".to_string(),

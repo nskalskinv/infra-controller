@@ -293,6 +293,18 @@ impl<B: Bmc> ExploredComputerSystem<B> {
                     .unwrap_or_default()
             });
 
+        // GB300 (Lenovo) lists only the BMC in FirmwareInventory and reports the
+        // host UEFI version here. Carry the standard Redfish property through so
+        // firmware lookups have a source. Blank values are dropped.
+        let bios_version = self
+            .system
+            .raw()
+            .bios_version
+            .clone()
+            .flatten()
+            .map(|version| version.trim().to_string())
+            .filter(|version| !version.is_empty());
+
         Ok(ModelComputerSystem {
             ethernet_interfaces,
             id: self.system.id().to_string(),
@@ -308,6 +320,7 @@ impl<B: Bmc> ExploredComputerSystem<B> {
             power_state,
             sku: self.system.sku().map(|v| v.to_string()),
             boot_order,
+            bios_version,
         })
     }
 

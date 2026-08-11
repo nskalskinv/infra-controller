@@ -282,6 +282,22 @@ impl ExploredEndpoint {
                 return matching_inventory.version.as_ref();
             };
         }
+
+        // Lenovo GB300 reports the host UEFI version on
+        // ComputerSystem.BiosVersion instead of listing it in
+        // FirmwareInventory, so fall back to it before giving up.
+        if firmware_type == FirmwareComponentType::Uefi
+            && let Some(version) = self.report.system_bios_version()
+        {
+            tracing::debug!(
+                bmc_ip_address = %self.address,
+                ?firmware_type,
+                %version,
+                "Using ComputerSystem.BiosVersion for UEFI version",
+            );
+            return Some(version);
+        }
+
         None
     }
 
@@ -301,6 +317,16 @@ impl ExploredEndpoint {
                     versions.push(version);
                 };
             }
+        }
+
+        // Same GB300 fallback as `find_version`: without this,
+        // `need_host_fw_upgrade` sees an empty list and never attempts a UEFI
+        // upgrade on trays that do not list UEFI in FirmwareInventory.
+        if versions.is_empty()
+            && firmware_type == FirmwareComponentType::Uefi
+            && let Some(version) = self.report.system_bios_version()
+        {
+            versions.push(version);
         }
 
         tracing::debug!(
@@ -1106,6 +1132,18 @@ impl EndpointExplorationReport {
             .unwrap_or_default()
     }
 
+    /// Host UEFI version from `ComputerSystem.BiosVersion`.
+    ///
+    /// Fallback source for platforms that do not list UEFI under
+    /// `/UpdateService/FirmwareInventory`. Blank values are treated as absent so
+    /// a caller can never persist an empty version string.
+    pub fn system_bios_version(&self) -> Option<&String> {
+        self.systems
+            .iter()
+            .filter_map(|system| system.bios_version.as_ref())
+            .find(|version| !version.trim().is_empty())
+    }
+
     pub fn dpu_component_version(&self, component: FirmwareComponentType) -> Option<String> {
         match component {
             FirmwareComponentType::Bmc => self.dpu_bmc_version(),
@@ -1467,6 +1505,14 @@ pub struct ComputerSystem {
     pub sku: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boot_order: Option<BootOrder>,
+    /// Host UEFI version from the Redfish `ComputerSystem.BiosVersion` property.
+    ///
+    /// Most platforms also publish UEFI under `/UpdateService/FirmwareInventory`
+    /// (GB200 lists it as `UEFI`). Lenovo GB300 lists only the BMC there and
+    /// reports the host UEFI version here, so on those trays this is the only
+    /// source. See [`EndpointExplorationReport::system_bios_version`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bios_version: Option<String>,
 }
 
 pub fn base_mac_deserialize<'a, D>(deserializer: D) -> Result<Option<BaseMac>, D::Error>
@@ -3309,6 +3355,166 @@ mod tests {
         );
     }
 
+    /// Builds a report shaped like a GB300 tray: BMC listed in
+    /// FirmwareInventory, UEFI reachable only via ComputerSystem.BiosVersion.
+    fn gb300_report(bios_version: Option<&str>) -> EndpointExplorationReport {
+        let mut report = create_test_endpoint(vec![("BMC-Primary", Some("3.00.0"))]).report;
+        report.systems = vec![ComputerSystem {
+            id: "System_0".to_string(),
+            bios_version: bios_version.map(str::to_string),
+            ..Default::default()
+        }];
+        report
+    }
+
+    /// Lenovo GB300 reports the host UEFI version on ComputerSystem.BiosVersion
+    /// rather than in FirmwareInventory. Issue #4628.
+    #[test]
+    fn find_version_falls_back_to_system_bios_version_for_uefi() {
+        let fw_info = create_test_firmware(FirmwareComponentType::Uefi, "^UEFI");
+        let mut endpoint = create_test_endpoint(vec![("BMC-Primary", Some("3.00.0"))]);
+        endpoint.report = gb300_report(Some("LFO102M-1.10"));
+
+        assert_eq!(
+            endpoint.find_version(&fw_info, FirmwareComponentType::Uefi),
+            Some(&"LFO102M-1.10".to_string()),
+        );
+        // BMC must not borrow the BIOS string: only UEFI falls back.
+        assert_eq!(
+            endpoint.find_version(&fw_info, FirmwareComponentType::Bmc),
+            None,
+        );
+    }
+
+    /// Without this, `need_host_fw_upgrade` sees an empty list and GB300 UEFI
+    /// upgrades are never attempted.
+    #[test]
+    fn find_all_versions_falls_back_to_system_bios_version_for_uefi() {
+        let fw_info = create_test_firmware(FirmwareComponentType::Uefi, "^UEFI");
+        let mut endpoint = create_test_endpoint(vec![("BMC-Primary", Some("3.00.0"))]);
+        endpoint.report = gb300_report(Some("LFO102M-1.10"));
+
+        assert_eq!(
+            endpoint
+                .find_all_versions(&fw_info, FirmwareComponentType::Uefi)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["LFO102M-1.10".to_string()],
+        );
+    }
+
+    /// A platform that already lists UEFI must not get the fallback appended on
+    /// top of its real inventory entries.
+    #[test]
+    fn find_all_versions_does_not_append_fallback_when_inventory_matches() {
+        let fw_info = create_test_firmware(FirmwareComponentType::Uefi, "^UEFI");
+        let mut endpoint = create_test_endpoint(vec![("UEFI", Some("02.04.12"))]);
+        endpoint.report.systems = vec![ComputerSystem {
+            id: "System_0".to_string(),
+            bios_version: Some("LFO102M-1.10".to_string()),
+            ..Default::default()
+        }];
+
+        assert_eq!(
+            endpoint
+                .find_all_versions(&fw_info, FirmwareComponentType::Uefi)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["02.04.12".to_string()],
+        );
+    }
+
+    /// A blank BiosVersion must not count as a discovered version -- it would
+    /// satisfy site-explorer's BMC+UEFI gate and persist "".
+    #[test]
+    fn system_bios_version_ignores_blank_values() {
+        for blank in [Some(""), Some("   "), None] {
+            assert_eq!(gb300_report(blank).system_bios_version(), None, "{blank:?}");
+        }
+        assert_eq!(
+            gb300_report(Some("LFO102M-1.10")).system_bios_version(),
+            Some(&"LFO102M-1.10".to_string()),
+        );
+    }
+
+    /// The end-to-end shape of #4628: `parse_versions` must yield BOTH
+    /// components, because site-explorer refuses to write
+    /// bmc_info.firmware_version unless both keys are present -- which is why a
+    /// missing UEFI blanked the BMC version on /tray too.
+    #[test]
+    fn parse_versions_yields_bmc_and_uefi_on_gb300_shape() {
+        let mut components = HashMap::new();
+        for (component_type, pattern) in [
+            (FirmwareComponentType::Bmc, "^BMC-Primary"),
+            (FirmwareComponentType::Uefi, "^UEFI"),
+        ] {
+            components.insert(
+                component_type,
+                FirmwareComponent {
+                    current_version_reported_as: Some(Regex::new(pattern).unwrap()),
+                    preingest_upgrade_when_below: None,
+                    known_firmware: vec![],
+                },
+            );
+        }
+        let fw_info = Firmware {
+            vendor: bmc_vendor::BMCVendor::LenovoAMI,
+            model: "HG634N_V2".to_string(),
+            components,
+            explicit_start_needed: false,
+            ordering: vec![],
+        };
+
+        let mut report = gb300_report(Some("LFO102M-1.10"));
+        let not_found = report.parse_versions(&fw_info);
+
+        assert!(
+            not_found.is_empty(),
+            "both components must resolve: {not_found:?}",
+        );
+        assert_eq!(
+            report.versions.get(&FirmwareComponentType::Bmc),
+            Some(&"3.00.0".to_string()),
+        );
+        assert_eq!(
+            report.versions.get(&FirmwareComponentType::Uefi),
+            Some(&"LFO102M-1.10".to_string()),
+        );
+    }
+
+    /// The report is persisted as JSON and re-read, so BiosVersion has to
+    /// survive a round trip -- and older rows without the key must still load.
+    #[test]
+    fn computer_system_bios_version_round_trips() {
+        let system = ComputerSystem {
+            id: "System_0".to_string(),
+            bios_version: Some("LFO102M-1.10".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&system).expect("serializes");
+        assert_eq!(json["BiosVersion"], "LFO102M-1.10");
+        assert_eq!(
+            serde_json::from_value::<ComputerSystem>(json).expect("deserializes"),
+            system,
+        );
+
+        // A report written before this field existed still loads.
+        let legacy = serde_json::json!({ "Id": "System_0" });
+        let parsed: ComputerSystem = serde_json::from_value(legacy).expect("legacy deserializes");
+        assert_eq!(parsed.bios_version, None);
+
+        // And a system without the field must not emit the key, so
+        // `find_upgrade_needed`'s whole-map string comparison is unaffected.
+        let bare = ComputerSystem {
+            id: "System_0".to_string(),
+            ..Default::default()
+        };
+        let bare_json = serde_json::to_value(&bare).expect("serializes");
+        assert!(bare_json.get("BiosVersion").is_none());
+    }
+
     struct FindAllVersionsInput {
         regex_pattern: &'static str,
         inventories: Vec<(&'static str, Option<&'static str>)>,
@@ -3521,6 +3727,7 @@ mod tests {
                 power_state: PowerState::On,
                 sku: None,
                 boot_order: None,
+                bios_version: None,
             }],
             chassis: vec![Chassis {
                 id: "NIC.Slot.1".to_string(),
@@ -3593,6 +3800,7 @@ mod tests {
                 power_state: PowerState::On,
                 sku: None,
                 boot_order: None,
+                bios_version: None,
             }],
             chassis: vec![Chassis {
                 id: "NIC.Slot.1".to_string(),
