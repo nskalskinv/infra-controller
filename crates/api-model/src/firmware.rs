@@ -481,7 +481,7 @@ mod tests {
         let report = EndpointExplorationReport {
             systems: vec![crate::site_explorer::ComputerSystem {
                 id: "System_0".to_string(),
-                bios_version: Some("LFO102M-1.10".to_string()),
+                bios_version: Some("GBHC01A_01.05.0".to_string()),
                 ..Default::default()
             }],
             ..Default::default()
@@ -489,7 +489,7 @@ mod tests {
 
         assert_eq!(
             fw_info.find_version(&report, FirmwareComponentType::Uefi),
-            Some("LFO102M-1.10".to_string()),
+            Some("GBHC01A_01.05.0".to_string()),
         );
         // Only UEFI falls back; BMC must not borrow the BIOS string.
         assert_eq!(

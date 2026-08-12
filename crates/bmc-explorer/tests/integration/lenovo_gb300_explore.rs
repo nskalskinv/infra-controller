@@ -52,11 +52,15 @@ async fn explore_lenovo_gb300() {
 
     // Regression for #4628: GB300 does not list UEFI in FirmwareInventory, so
     // the host UEFI version has to come from ComputerSystem.BiosVersion.
-    let system = report.systems.first().expect("system must be present");
-    assert_eq!(system.bios_version.as_deref(), Some("LFO102M-1.10"));
+    let system = report
+        .systems
+        .iter()
+        .find(|system| system.id == "System_0")
+        .expect("Lenovo host System_0 must be present");
+    assert_eq!(system.bios_version.as_deref(), Some("GBHC01A_01.05.0"),);
     assert_eq!(
-        report.system_bios_version(),
-        Some(&"LFO102M-1.10".to_string()),
+        report.system_bios_version().map(String::as_str),
+        Some("GBHC01A_01.05.0"),
     );
 
     // Pin the premise: if a future mock change starts listing UEFI here, this
@@ -66,6 +70,10 @@ async fn explore_lenovo_gb300() {
         .keys()
         .copied()
         .collect::<Vec<_>>();
+    assert!(
+        inventory_ids.contains(&"BMC"),
+        "GB300 must expose the host BMC as `BMC`: {inventory_ids:?}",
+    );
     assert!(
         !inventory_ids.contains(&"UEFI"),
         "GB300 must not expose UEFI via FirmwareInventory: {inventory_ids:?}",

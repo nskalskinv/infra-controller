@@ -189,7 +189,7 @@ impl DgxGB300Nvl<'_> {
                     eth_interfaces: Some(eth_interfaces),
                     id: system_id.into(),
                     log_services: None,
-                    // DGX GB300: NVIDIA host system (vs Lenovo's "HG634N_V2").
+                    // DGX GB300: NVIDIA host system (vs Lenovo's "HG635N_V2").
                     manufacturer: Some("NVIDIA".into()),
                     model: Some("GB300 Titania-Bianca Compute Tray".into()),
                     bios_version: None,

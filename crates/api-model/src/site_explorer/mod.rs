@@ -1132,16 +1132,17 @@ impl EndpointExplorationReport {
             .unwrap_or_default()
     }
 
-    /// Host UEFI version from `ComputerSystem.BiosVersion`.
+    /// Host UEFI version from `/Systems/System_0.BiosVersion`.
     ///
-    /// Fallback source for platforms that do not list UEFI under
-    /// `/UpdateService/FirmwareInventory`. Blank values are treated as absent so
-    /// a caller can never persist an empty version string.
+    /// Lenovo GB300 exposes multiple ComputerSystem resources, so selecting
+    /// `System_0` explicitly prevents an HGX baseboard BIOS version from being
+    /// mistaken for the host UEFI version. Blank values are treated as absent.
     pub fn system_bios_version(&self) -> Option<&String> {
         self.systems
             .iter()
-            .filter_map(|system| system.bios_version.as_ref())
-            .find(|version| !version.trim().is_empty())
+            .find(|system| system.id == "System_0")
+            .and_then(|system| system.bios_version.as_ref())
+            .filter(|version| !version.trim().is_empty())
     }
 
     pub fn dpu_component_version(&self, component: FirmwareComponentType) -> Option<String> {
@@ -3358,7 +3359,7 @@ mod tests {
     /// Builds a report shaped like a GB300 tray: BMC listed in
     /// FirmwareInventory, UEFI reachable only via ComputerSystem.BiosVersion.
     fn gb300_report(bios_version: Option<&str>) -> EndpointExplorationReport {
-        let mut report = create_test_endpoint(vec![("BMC-Primary", Some("3.00.0"))]).report;
+        let mut report = create_test_endpoint(vec![("BMC", Some("3.00.0"))]).report;
         report.systems = vec![ComputerSystem {
             id: "System_0".to_string(),
             bios_version: bios_version.map(str::to_string),
@@ -3372,12 +3373,12 @@ mod tests {
     #[test]
     fn find_version_falls_back_to_system_bios_version_for_uefi() {
         let fw_info = create_test_firmware(FirmwareComponentType::Uefi, "^UEFI");
-        let mut endpoint = create_test_endpoint(vec![("BMC-Primary", Some("3.00.0"))]);
-        endpoint.report = gb300_report(Some("LFO102M-1.10"));
+        let mut endpoint = create_test_endpoint(vec![("BMC", Some("3.00.0"))]);
+        endpoint.report = gb300_report(Some("GBHC01A_01.05.0"));
 
         assert_eq!(
             endpoint.find_version(&fw_info, FirmwareComponentType::Uefi),
-            Some(&"LFO102M-1.10".to_string()),
+            Some(&"GBHC01A_01.05.0".to_string()),
         );
         // BMC must not borrow the BIOS string: only UEFI falls back.
         assert_eq!(
@@ -3391,8 +3392,8 @@ mod tests {
     #[test]
     fn find_all_versions_falls_back_to_system_bios_version_for_uefi() {
         let fw_info = create_test_firmware(FirmwareComponentType::Uefi, "^UEFI");
-        let mut endpoint = create_test_endpoint(vec![("BMC-Primary", Some("3.00.0"))]);
-        endpoint.report = gb300_report(Some("LFO102M-1.10"));
+        let mut endpoint = create_test_endpoint(vec![("BMC", Some("3.00.0"))]);
+        endpoint.report = gb300_report(Some("GBHC01A_01.05.0"));
 
         assert_eq!(
             endpoint
@@ -3400,7 +3401,7 @@ mod tests {
                 .into_iter()
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec!["LFO102M-1.10".to_string()],
+            vec!["GBHC01A_01.05.0".to_string()],
         );
     }
 
@@ -3412,7 +3413,7 @@ mod tests {
         let mut endpoint = create_test_endpoint(vec![("UEFI", Some("02.04.12"))]);
         endpoint.report.systems = vec![ComputerSystem {
             id: "System_0".to_string(),
-            bios_version: Some("LFO102M-1.10".to_string()),
+            bios_version: Some("GBHC01A_01.05.0".to_string()),
             ..Default::default()
         }];
 
@@ -3434,8 +3435,34 @@ mod tests {
             assert_eq!(gb300_report(blank).system_bios_version(), None, "{blank:?}");
         }
         assert_eq!(
-            gb300_report(Some("LFO102M-1.10")).system_bios_version(),
-            Some(&"LFO102M-1.10".to_string()),
+            gb300_report(Some("GBHC01A_01.05.0")).system_bios_version(),
+            Some(&"GBHC01A_01.05.0".to_string()),
+        );
+    }
+
+    /// Lenovo GB300 exposes both an HGX baseboard and the Lenovo host system.
+    /// Only System_0.BiosVersion represents the host UEFI version.
+    #[test]
+    fn system_bios_version_selects_system_0() {
+        let report = EndpointExplorationReport {
+            systems: vec![
+                ComputerSystem {
+                    id: "HGX_Baseboard_0".to_string(),
+                    bios_version: Some("HGX-BASEBOARD-VERSION".to_string()),
+                    ..Default::default()
+                },
+                ComputerSystem {
+                    id: "System_0".to_string(),
+                    bios_version: Some("GBHC01A_01.05.0".to_string()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            report.system_bios_version().map(String::as_str),
+            Some("GBHC01A_01.05.0"),
         );
     }
 
@@ -3447,7 +3474,7 @@ mod tests {
     fn parse_versions_yields_bmc_and_uefi_on_gb300_shape() {
         let mut components = HashMap::new();
         for (component_type, pattern) in [
-            (FirmwareComponentType::Bmc, "^BMC-Primary"),
+            (FirmwareComponentType::Bmc, "^BMC$"),
             (FirmwareComponentType::Uefi, "^UEFI"),
         ] {
             components.insert(
@@ -3461,13 +3488,13 @@ mod tests {
         }
         let fw_info = Firmware {
             vendor: bmc_vendor::BMCVendor::LenovoAMI,
-            model: "HG634N_V2".to_string(),
+            model: "HG635N_V2".to_string(),
             components,
             explicit_start_needed: false,
             ordering: vec![],
         };
 
-        let mut report = gb300_report(Some("LFO102M-1.10"));
+        let mut report = gb300_report(Some("GBHC01A_01.05.0"));
         let not_found = report.parse_versions(&fw_info);
 
         assert!(
@@ -3480,7 +3507,7 @@ mod tests {
         );
         assert_eq!(
             report.versions.get(&FirmwareComponentType::Uefi),
-            Some(&"LFO102M-1.10".to_string()),
+            Some(&"GBHC01A_01.05.0".to_string()),
         );
     }
 
@@ -3490,11 +3517,11 @@ mod tests {
     fn computer_system_bios_version_round_trips() {
         let system = ComputerSystem {
             id: "System_0".to_string(),
-            bios_version: Some("LFO102M-1.10".to_string()),
+            bios_version: Some("GBHC01A_01.05.0".to_string()),
             ..Default::default()
         };
         let json = serde_json::to_value(&system).expect("serializes");
-        assert_eq!(json["BiosVersion"], "LFO102M-1.10");
+        assert_eq!(json["BiosVersion"], "GBHC01A_01.05.0");
         assert_eq!(
             serde_json::from_value::<ComputerSystem>(json).expect("deserializes"),
             system,

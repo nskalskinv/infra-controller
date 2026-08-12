@@ -196,11 +196,11 @@ impl LenovoGB300Nvl<'_> {
                     // simulate it so far.
                     log_services: None,
                     manufacturer: Some("Lenovo".into()),
-                    model: Some("HG634N_V2".into()),
+                    // Model reported by the real Lenovo GB300 System_0 resource.
+                    model: Some("HG635N_V2".into()),
                     // GB300 does not list UEFI under FirmwareInventory; the host
                     // UEFI version is only here. See update_service_config below.
-                    // PLACEHOLDER: replace with a value from a real Redfish dump.
-                    bios_version: Some("LFO102M-1.10".into()),
+                    bios_version: Some("GBHC01A_01.05.0".into()),
                     oem: redfish::computer_system::Oem::Generic,
                     callbacks: Some(callbacks),
                     serial_console: None,
@@ -292,10 +292,8 @@ impl LenovoGB300Nvl<'_> {
             // version is only on ComputerSystem.BiosVersion. Contrast
             // wiwynn_gb200_nvl, which lists both FW_BMC_0 and UEFI.
             //
-            // "BMC-Primary" is what LenovoAMI's catalog regex expects
-            // (api-core/src/handlers/firmware.rs catalog_component_regex).
-            // PLACEHOLDER: confirm against a real Redfish dump.
-            firmware_inventory: [("BMC-Primary", "3.00.0")]
+            // The real GB300 inventory identifies the host BMC as exactly `BMC`.
+            firmware_inventory: [("BMC", "3.00.0")]
                 .iter()
                 .map(|(id, version)| fw_inv_builder(id).version(version).build())
                 .collect(),

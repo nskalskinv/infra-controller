@@ -536,6 +536,14 @@ fn catalog_component_regex(
             _ => None,
         },
         bmc_vendor::BMCVendor::Lenovo | bmc_vendor::BMCVendor::LenovoAMI => {
+            // Lenovo GB300 compute trays report the host BMC firmware with the
+            // exact inventory ID `BMC`, rather than the `BMC-Primary` used by
+            // other LenovoAMI systems. UEFI is absent from FirmwareInventory
+            // and is resolved separately from System_0.BiosVersion.
+            if model_matches(model, "HG635N_V2") && component_type == FirmwareComponentType::Bmc {
+                return Some("^BMC$");
+            }
+
             if model_matches(model, "ThinkSystem HS350X V3")
                 && component_type == FirmwareComponentType::Bmc
             {
@@ -823,6 +831,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(lenovo_ami_regex.as_str(), "^BMC-Primary");
+
+        let lenovo_gb300_bmc_regex = component_regex(
+            bmc_vendor::BMCVendor::LenovoAMI,
+            "HG635N_V2",
+            FirmwareComponentType::Bmc,
+        )
+        .expect("Lenovo GB300 BMC must have a catalog regex");
+        assert_eq!(lenovo_gb300_bmc_regex.as_str(), "^BMC$");
+
+        // UEFI remains a supported component even though Lenovo GB300 does not
+        // list it in FirmwareInventory; System_0.BiosVersion supplies its value.
+        let lenovo_gb300_uefi_regex = component_regex(
+            bmc_vendor::BMCVendor::LenovoAMI,
+            "HG635N_V2",
+            FirmwareComponentType::Uefi,
+        )
+        .expect("Lenovo GB300 UEFI must have a catalog regex");
+        assert_eq!(lenovo_gb300_uefi_regex.as_str(), "^UEFI");
     }
 
     #[test]
