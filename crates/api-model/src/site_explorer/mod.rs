@@ -129,7 +129,15 @@ impl EndpointExplorationReport {
     /// model does a best effort to find a model name within the report
     pub fn model(&self) -> Option<String> {
         // Prefer Systems, not Chassis; at least for Lenovo, Chassis has what is more of a SKU instead of the actual model name.
-        let system_with_model = self.systems.iter().find(|&x| x.model.is_some());
+        // Multi-system trays can expose an auxiliary HGX baseboard before the
+        // host system. Prefer System_0 so firmware catalog lookup uses the host
+        // model, then preserve the previous first-model fallback for platforms
+        // that do not expose a System_0 resource.
+        let system_with_model = self
+            .systems
+            .iter()
+            .find(|system| system.id == "System_0" && system.model.is_some())
+            .or_else(|| self.systems.iter().find(|system| system.model.is_some()));
         Some(match system_with_model {
             Some(system) => match &system.model {
                 Some(model) => model.to_owned(),
@@ -3464,6 +3472,29 @@ mod tests {
             report.system_bios_version().map(String::as_str),
             Some("GBHC01A_01.05.0"),
         );
+    }
+
+    /// Lenovo GB300 reports the HGX baseboard before the Lenovo host system.
+    /// Firmware catalog lookup must use the host model from System_0.
+    #[test]
+    fn model_prefers_system_0_over_hgx_baseboard() {
+        let report = EndpointExplorationReport {
+            systems: vec![
+                ComputerSystem {
+                    id: "HGX_Baseboard_0".to_string(),
+                    model: Some("GB300 1CPU:2GPU Board PC".to_string()),
+                    ..Default::default()
+                },
+                ComputerSystem {
+                    id: "System_0".to_string(),
+                    model: Some("HG635N_V2".to_string()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(report.model().as_deref(), Some("HG635N_V2"));
     }
 
     /// The end-to-end shape of #4628: `parse_versions` must yield BOTH

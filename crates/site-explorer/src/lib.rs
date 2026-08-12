@@ -4475,6 +4475,85 @@ mod tests {
         );
     }
 
+    /// A Lenovo GB300 report lists the HGX baseboard before System_0. Enrichment
+    /// must use the System_0 model for firmware catalog lookup and then resolve
+    /// BMC from FirmwareInventory and UEFI from System_0.BiosVersion.
+    #[test]
+    fn enrich_gb300_report_uses_host_model_and_populates_firmware_versions() {
+        use model::firmware::{Firmware, FirmwareComponent, FirmwareComponentType};
+        use model::site_explorer::{ComputerSystem, Inventory, Service};
+
+        let components = std::collections::HashMap::from([
+            (
+                FirmwareComponentType::Bmc,
+                FirmwareComponent {
+                    current_version_reported_as: Some(regex::Regex::new("^BMC$").unwrap()),
+                    ..Default::default()
+                },
+            ),
+            (
+                FirmwareComponentType::Uefi,
+                FirmwareComponent {
+                    current_version_reported_as: Some(regex::Regex::new("^UEFI").unwrap()),
+                    ..Default::default()
+                },
+            ),
+        ]);
+        let firmware = Firmware {
+            vendor: bmc_vendor::BMCVendor::LenovoAMI,
+            model: "HG635N_V2".to_string(),
+            components,
+            explicit_start_needed: false,
+            ordering: vec![],
+        };
+        let host_models = std::collections::HashMap::from([("lenovo-gb300".to_string(), firmware)]);
+        let dpu_models = std::collections::HashMap::new();
+        let firmware_config = carbide_firmware::FirmwareConfig::new(
+            std::path::PathBuf::new(),
+            &host_models,
+            &dpu_models,
+        )
+        .create_snapshot();
+
+        let mut report = EndpointExplorationReport {
+            vendor: Some(bmc_vendor::BMCVendor::LenovoAMI),
+            systems: vec![
+                ComputerSystem {
+                    id: "HGX_Baseboard_0".to_string(),
+                    model: Some("GB300 1CPU:2GPU Board PC".to_string()),
+                    ..Default::default()
+                },
+                ComputerSystem {
+                    id: "System_0".to_string(),
+                    model: Some("HG635N_V2".to_string()),
+                    bios_version: Some("GBHC01A_01.05.0".to_string()),
+                    ..Default::default()
+                },
+            ],
+            service: vec![Service {
+                id: "FirmwareInventory".to_string(),
+                inventories: vec![Inventory {
+                    id: "BMC".to_string(),
+                    version: Some("3.00.0".to_string()),
+                    ..Default::default()
+                }],
+            }],
+            ..Default::default()
+        };
+
+        enrich_endpoint_exploration_report(&mut report, &firmware_config);
+
+        assert_eq!(report.model.as_deref(), Some("HG635N_V2"));
+        assert_eq!(
+            report.versions.get(&FirmwareComponentType::Bmc),
+            Some(&"3.00.0".to_string()),
+        );
+        assert_eq!(
+            report.versions.get(&FirmwareComponentType::Uefi),
+            Some(&"GBHC01A_01.05.0".to_string()),
+        );
+    }
+
     /// Only an explicit DPU OS role suppresses Redfish scanning.
     ///
     /// Host remains eligible because it is the default for legacy entries

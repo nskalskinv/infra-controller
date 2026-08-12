@@ -49,6 +49,11 @@ async fn explore_lenovo_gb300() {
     assert_eq!(report.vendor, Some(bmc_vendor::BMCVendor::LenovoAMI));
     assert!(!report.systems.is_empty(), "systems must be present");
     assert!(!report.chassis.is_empty(), "chassis must be present");
+    assert_eq!(
+        report.model().as_deref(),
+        Some("HG635N_V2"),
+        "firmware catalog lookup must use the Lenovo host model",
+    );
 
     // Regression for #4628: GB300 does not list UEFI in FirmwareInventory, so
     // the host UEFI version has to come from ComputerSystem.BiosVersion.
