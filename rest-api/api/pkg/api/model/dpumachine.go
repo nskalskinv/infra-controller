@@ -6,11 +6,28 @@ package model
 import (
 	"time"
 
+	validation "github.com/go-ozzo/ozzo-validation/v4"
+	validationis "github.com/go-ozzo/ozzo-validation/v4/is"
 	"github.com/google/uuid"
 
 	cdbm "github.com/NVIDIA/infra-controller/rest-api/db/pkg/db/model"
 	corev1 "github.com/NVIDIA/infra-controller/rest-api/proto/core/gen/v1"
 )
+
+// APIGetAllDpuMachineRequest binds query parameters for GET /dpu.
+type APIGetAllDpuMachineRequest struct {
+	SiteID string `query:"siteId"`
+}
+
+// Validate checks the DPU list query shape.
+func (r *APIGetAllDpuMachineRequest) Validate() error {
+	return validation.ValidateStruct(r,
+		validation.Field(&r.SiteID,
+			validation.Required.Error(validationErrorValueRequired),
+			validationis.UUID.Error(validationErrorInvalidUUID),
+		),
+	)
+}
 
 // APIDpuNetworkConfig represents the network configuration fields exposed by the REST API for a DPU.
 // Internal-only and sensitive Core fields are omitted; this is not the complete Core configuration.
@@ -443,7 +460,7 @@ type APIDpuMachine struct {
 	State string `json:"state"`
 	// DpuNetworkConfig contains the network configuration fields exposed by the REST API for the DPU.
 	// Internal-only and sensitive Core fields are omitted; the REST response retains its public JSON shape.
-	DpuNetworkConfig APIDpuNetworkConfig `json:"dpuNetworkConfig"`
+	DpuNetworkConfig *APIDpuNetworkConfig `json:"dpuNetworkConfig"`
 	// LastRebooted is the last reboot timestamp reported by NICo Core
 	LastRebooted *time.Time `json:"lastRebooted"`
 	// PlacementInRack is the physical placement of the DPU Machine within its Rack
@@ -542,7 +559,7 @@ func (apd *APIDpuMachine) FromProto(protoDpuMachine *corev1.DpuMachine, ctx APID
 	apd.State = protoMachine.State
 
 	if protoDpuMachine.DpuNetworkConfig != nil {
-		apd.DpuNetworkConfig = APIDpuNetworkConfig{}
+		apd.DpuNetworkConfig = &APIDpuNetworkConfig{}
 		apd.DpuNetworkConfig.FromProto(protoDpuMachine.DpuNetworkConfig)
 	}
 

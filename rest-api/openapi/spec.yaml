@@ -10304,6 +10304,71 @@ paths:
           in: query
           name: orderBy
           description: Ordering for pagination query
+  '/v2/org/{org}/nico/dpu':
+    parameters:
+      - schema:
+          type: string
+        name: org
+        in: path
+        required: true
+        description: Name of the Org
+    get:
+      operationId: get-all-dpu-machines
+      summary: Retrieve all DPU Machines for a Site
+      description: |
+        Retrieve all DPU Machines for a Site in deterministic DPU Machine ID order.
+
+        The bulk Core Machine response does not include DPU network configuration, so `dpuNetworkConfig` is `null` in this response.
+
+        User must have authorization role with `PROVIDER_ADMIN` suffix on the org that owns the Site.
+      tags:
+        - Machine
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: query
+          name: siteId
+          required: true
+          description: ID of the Site
+        - schema:
+            type: integer
+          in: query
+          name: pageNumber
+          description: Page number for pagination query
+        - schema:
+            type: integer
+          in: query
+          name: pageSize
+          description: Page size for pagination query
+        - schema:
+            type: string
+            enum:
+              - ID_ASC
+              - ID_DESC
+            default: ID_ASC
+          in: query
+          name: orderBy
+          description: DPU Machine ID ordering
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DpuMachine'
+          headers:
+            X-Pagination:
+              schema:
+                type: string
+                example: '{"pageNumber":1,"pageSize":20,"total":30,"orderBy":"ID_ASC"}'
+              description: Pagination result in JSON format
+        '400':
+          $ref: '#/components/responses/GenericHttpError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
   '/v2/org/{org}/nico/machine/{machineId}/dpu':
     parameters:
       - schema:
@@ -28483,7 +28548,9 @@ components:
           type: string
           description: Lifecycle state of the DPU
         dpuNetworkConfig:
-          $ref: '#/components/schemas/DpuNetworkConfig'
+          oneOf:
+            - $ref: '#/components/schemas/DpuNetworkConfig'
+            - type: 'null'
           description: Network configuration fields exposed by the REST API
         lastRebooted:
           type:

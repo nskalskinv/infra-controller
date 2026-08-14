@@ -4,11 +4,13 @@
 package model
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	cutil "github.com/NVIDIA/infra-controller/rest-api/common/pkg/util"
@@ -167,4 +169,23 @@ func TestNewAPIDpuMachines(t *testing.T) {
 	assert.Equal(t, ctx.HostMachineID, apiDpuMachines[0].HostMachineID)
 	assert.Equal(t, ctx.SiteID.String(), apiDpuMachines[0].SiteID)
 	assert.Equal(t, ctx.InfrastructureProviderID.String(), apiDpuMachines[0].InfrastructureProviderID)
+}
+
+func TestAPIDpuMachine_DpuNetworkConfigJSON(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *APIDpuNetworkConfig
+		want   string
+	}{
+		{name: "unavailable configuration is null", want: `"dpuNetworkConfig":null`},
+		{name: "available configuration is an object", config: &APIDpuNetworkConfig{Asn: 65001}, want: `"dpuNetworkConfig":{"asn":65001`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded, err := json.Marshal(APIDpuMachine{DpuNetworkConfig: tt.config})
+			require.NoError(t, err)
+			assert.Contains(t, string(encoded), tt.want)
+		})
+	}
 }
