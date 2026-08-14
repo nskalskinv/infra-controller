@@ -46,9 +46,11 @@ func TestGetAllDpuMachinesHandler_Handle(t *testing.T) {
 			},
 		},
 		{
-			Id:                      &corev1.MachineId{Id: "dpu-3"},
-			State:                   "Ready",
-			AssociatedHostMachineId: &corev1.MachineId{Id: "host-3"},
+			Id:    &corev1.MachineId{Id: "dpu-3"},
+			State: "Ready",
+			Status: &corev1.MachineStatus{
+				AssociatedHostMachineId: &corev1.MachineId{Id: "host-3"},
+			},
 		},
 	}})
 
