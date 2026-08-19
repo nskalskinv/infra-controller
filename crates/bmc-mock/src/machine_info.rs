@@ -20,9 +20,12 @@ use std::sync::Arc;
 use mac_address::MacAddress;
 use serde::{Deserialize, Serialize};
 
+use crate::infiniband::Guid;
 use crate::mac_address_pool::{MacAddressPool, PoolConfig as MacAddressPoolConfig};
 use crate::redfish::update_service::UpdateServiceConfig;
-use crate::{DUMMY_FACTORY_PASSWORD, DUMMY_FACTORY_USERNAME, HardwareType, hw, redfish};
+use crate::{
+    DUMMY_FACTORY_PASSWORD, DUMMY_FACTORY_USERNAME, HardwareType, RackPlacement, hw, redfish,
+};
 
 /// Represents static information we know ahead of time about a host or DPU (independent of any
 /// state we get from carbide like IP addresses or machine ID's.) Intended to be immutable and
@@ -36,6 +39,7 @@ pub enum MachineInfo {
 #[derive(Debug, Clone)]
 pub struct HostMachineInfo {
     pub hw_type: HardwareType,
+    pub rack_placement: Option<RackPlacement>,
     pub bmc_mac_address: MacAddress,
     pub serial: String,
     pub dpus: Vec<DpuMachineInfo>,
@@ -329,6 +333,7 @@ impl HostMachineInfo {
             .map(|mac| format!("MT{}", mac.to_string().replace(':', "")));
         Self {
             hw_type,
+            rack_placement: None,
             bmc_mac_address,
             serial: bmc_mac_address.to_string().replace(':', ""),
             non_dpu_mac_address: if dpus.is_empty()
@@ -381,15 +386,14 @@ impl HostMachineInfo {
             .or(self.non_dpu_mac_address)
     }
 
-    pub fn infiniband_port_guids(&self) -> Vec<String> {
+    pub fn infiniband_port_guids(&self) -> Vec<Guid> {
         let [b0, b1, b2, b3, b4, b5] = self.hw_mac_addr_pool.base().bytes();
         (0..self.hw_type.infiniband_port_count())
             .map(|interface_index| {
                 let interface_index = u16::try_from(interface_index)
                     .expect("mock hardware models have fewer than 65536 InfiniBand interfaces");
                 let [b6, b7] = interface_index.to_be_bytes();
-                let guid = u64::from_be_bytes([b0, b1, b2, b3, b4, b5, b6, b7]);
-                format!("{guid:016x}")
+                Guid::from([b0, b1, b2, b3, b4, b5, b6, b7])
             })
             .collect()
     }
@@ -702,12 +706,9 @@ impl HostMachineInfo {
                     serial_number: "MT0000000002".into(),
                 },
             ],
-            topology: hw::nvidia_gbx00::Topology {
-                chassis_physical_slot_number: 24,
-                compute_tray_index: 14,
-                revision_id: 2,
-                topology_id: 128,
-            },
+            topology: self
+                .rack_placement
+                .and_then(hw::nvidia_gbx00::Topology::from_rack_placement),
         }
     }
 
@@ -744,12 +745,9 @@ impl HostMachineInfo {
             bmc_mac_address_usb0: next_mac(),
             hgx_bmc_mac_address_usb0: next_mac(),
             hgx_serial_number: superchip_a_sn.into(),
-            topology: hw::nvidia_gbx00::Topology {
-                chassis_physical_slot_number: 25,
-                compute_tray_index: 15,
-                revision_id: 2,
-                topology_id: 128,
-            },
+            topology: self
+                .rack_placement
+                .and_then(hw::nvidia_gbx00::Topology::from_rack_placement),
             cpu: boards.cpu,
             gpu: boards.gpu,
             io_board: boards.io_board,
@@ -787,12 +785,9 @@ impl HostMachineInfo {
             bmc_mac_address_usb0: next_mac(),
             hgx_bmc_mac_address_usb0: next_mac(),
             hgx_serial_number: superchip_a_sn.into(),
-            topology: hw::nvidia_gbx00::Topology {
-                chassis_physical_slot_number: 25,
-                compute_tray_index: 15,
-                revision_id: 2,
-                topology_id: 128,
-            },
+            topology: self
+                .rack_placement
+                .and_then(hw::nvidia_gbx00::Topology::from_rack_placement),
             cpu: boards.cpu,
             gpu: boards.gpu,
             io_board: boards.io_board,
@@ -830,12 +825,9 @@ impl HostMachineInfo {
             bmc_mac_address_usb0: next_mac(),
             hgx_bmc_mac_address_usb0: next_mac(),
             hgx_serial_number: "012345678901234567890123".into(),
-            topology: hw::nvidia_gbx00::Topology {
-                chassis_physical_slot_number: 25,
-                compute_tray_index: 15,
-                revision_id: 2,
-                topology_id: 128,
-            },
+            topology: self
+                .rack_placement
+                .and_then(hw::nvidia_gbx00::Topology::from_rack_placement),
             cpu: [
                 hw::nvidia_gb300::NvidiaGB300Cpu {
                     serial_number: cpu0_sn.into(),

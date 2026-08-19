@@ -19,6 +19,8 @@ import (
 )
 
 func TestAPIDpuMachine_FromProto(t *testing.T) {
+	const maxUint32 = uint32(1<<32 - 1)
+
 	site := &cdbm.Site{
 		ID:                       uuid.New(),
 		InfrastructureProviderID: uuid.New(),
@@ -31,29 +33,53 @@ func TestAPIDpuMachine_FromProto(t *testing.T) {
 			Id: &corev1.MachineId{
 				Id: "test-machine-id",
 			},
-			DpuAgentVersion: cutil.GetPtr("1.0.0"),
-			BmcInfo: &corev1.BmcInfo{
-				Ip: cutil.GetPtr("10.0.0.1"),
-			},
-			DiscoveryInfo: &corev1.DiscoveryInfo{
-				DmiData: &corev1.DmiData{
-					BoardName:     "test-board-name",
-					BoardSerial:   "test-board-serial",
-					BoardVersion:  "test-board-version",
-					BiosDate:      "test-bios-date",
-					BiosVersion:   "test-bios-version",
-					ProductSerial: "test-product-serial",
-					ChassisSerial: "test-chassis-serial",
-					ProductName:   "test-product-name",
-					SysVendor:     "test-sys-vendor",
-				},
-			},
-			Interfaces: []*corev1.MachineInterface{
-				{
-					Id: &corev1.MachineInterfaceId{
-						Value: "test-interface-id",
+			Status: &corev1.MachineStatus{
+				DpuAgentVersion: cutil.GetPtr("1.0.0"),
+				DiscoveryInfo: &corev1.DiscoveryInfo{
+					DmiData: &corev1.DmiData{
+						BoardName:     "test-board-name",
+						BoardSerial:   "test-board-serial",
+						BoardVersion:  "test-board-version",
+						BiosDate:      "test-bios-date",
+						BiosVersion:   "test-bios-version",
+						ProductSerial: "test-product-serial",
+						ChassisSerial: "test-chassis-serial",
+						ProductName:   "test-product-name",
+						SysVendor:     "test-sys-vendor",
 					},
 				},
+				Interfaces: []*corev1.MachineInterface{
+					{
+						Id: &corev1.MachineInterfaceId{
+							Value: "test-interface-id",
+						},
+					},
+				},
+				Health: &corev1.HealthReport{
+					Source:     "test-health-source",
+					ObservedAt: timestamppb.New(time.Now()),
+					Successes: []*corev1.HealthProbeSuccess{
+						{
+							Id:     "test-success-id",
+							Target: cutil.GetPtr("test-success-target"),
+						},
+					},
+					Alerts: []*corev1.HealthProbeAlert{
+						{
+							Id:           "test-alert-id",
+							Target:       cutil.GetPtr("test-alert-target"),
+							InAlertSince: nil,
+							Classifications: []string{
+								"test-alert-classification",
+							},
+							Message:       "test-alert-message",
+							TenantMessage: nil,
+						},
+					},
+				},
+			},
+			BmcInfo: &corev1.BmcInfo{
+				Ip: cutil.GetPtr("10.0.0.1"),
 			},
 			Inventory: &corev1.MachineComponentInventory{
 				Components: []*corev1.MachineInventorySoftwareComponent{
@@ -64,28 +90,6 @@ func TestAPIDpuMachine_FromProto(t *testing.T) {
 					},
 				},
 			},
-			Health: &corev1.HealthReport{
-				Source:     "test-health-source",
-				ObservedAt: timestamppb.New(time.Now()),
-				Successes: []*corev1.HealthProbeSuccess{
-					{
-						Id:     "test-success-id",
-						Target: cutil.GetPtr("test-success-target"),
-					},
-				},
-				Alerts: []*corev1.HealthProbeAlert{
-					{
-						Id:           "test-alert-id",
-						Target:       cutil.GetPtr("test-alert-target"),
-						InAlertSince: nil,
-						Classifications: []string{
-							"test-alert-classification",
-						},
-						Message:       "test-alert-message",
-						TenantMessage: nil,
-					},
-				},
-			},
 			Metadata: &corev1.Metadata{
 				Labels: []*corev1.Label{
 					{
@@ -93,6 +97,23 @@ func TestAPIDpuMachine_FromProto(t *testing.T) {
 						Value: cutil.GetPtr("test"),
 					},
 				},
+			},
+		},
+		DpuNetworkConfig: &corev1.ManagedHostNetworkConfigResponse{
+			Asn:                    maxUint32,
+			VpcVni:                 cutil.GetPtr(maxUint32),
+			MinDpuFunctioningLinks: cutil.GetPtr(maxUint32),
+			InternetL3Vni:          cutil.GetPtr(maxUint32),
+			DatacenterAsn:          maxUint32,
+			TenantHostAsn:          cutil.GetPtr(maxUint32),
+			SiteGlobalVpcVni:       cutil.GetPtr(maxUint32),
+			AdminInterface: &corev1.FlatInterfaceConfig{
+				VlanId:            maxUint32,
+				Vni:               maxUint32,
+				VirtualFunctionId: cutil.GetPtr(maxUint32),
+				VpcVni:            maxUint32,
+				VpcPeerVnis:       []uint32{maxUint32},
+				Mtu:               cutil.GetPtr(maxUint32),
 			},
 		},
 	}
@@ -116,6 +137,24 @@ func TestAPIDpuMachine_FromProto(t *testing.T) {
 	assert.Equal(t, "test-board-version", *dpuMachine.DMIData.BoardVersion)
 	assert.Equal(t, "test-product-name", *dpuMachine.DMIData.ProductName)
 	assert.Equal(t, "test-sys-vendor", *dpuMachine.DMIData.SysVendor)
+	require.Len(t, dpuMachine.Interfaces, 1)
+	assert.Equal(t, "test-interface-id", dpuMachine.Interfaces[0].ID)
+	require.NotNil(t, dpuMachine.Health)
+	assert.Equal(t, "test-health-source", dpuMachine.Health.Source)
+	assert.Equal(t, maxUint32, dpuMachine.DpuNetworkConfig.Asn)
+	assert.Equal(t, maxUint32, *dpuMachine.DpuNetworkConfig.VpcVni)
+	assert.Equal(t, maxUint32, *dpuMachine.DpuNetworkConfig.MinDpuFunctioningLinks)
+	assert.Equal(t, maxUint32, *dpuMachine.DpuNetworkConfig.InternetL3Vni)
+	assert.Equal(t, maxUint32, dpuMachine.DpuNetworkConfig.DatacenterAsn)
+	assert.Equal(t, maxUint32, *dpuMachine.DpuNetworkConfig.TenantHostAsn)
+	assert.Equal(t, maxUint32, *dpuMachine.DpuNetworkConfig.SiteGlobalVpcVni)
+	require.NotNil(t, dpuMachine.DpuNetworkConfig.AdminInterface)
+	assert.Equal(t, maxUint32, dpuMachine.DpuNetworkConfig.AdminInterface.VlanID)
+	assert.Equal(t, maxUint32, dpuMachine.DpuNetworkConfig.AdminInterface.Vni)
+	assert.Equal(t, maxUint32, *dpuMachine.DpuNetworkConfig.AdminInterface.VirtualFunctionID)
+	assert.Equal(t, maxUint32, dpuMachine.DpuNetworkConfig.AdminInterface.VpcVni)
+	assert.Equal(t, []uint32{maxUint32}, dpuMachine.DpuNetworkConfig.AdminInterface.VpcPeerVnis)
+	assert.Equal(t, maxUint32, *dpuMachine.DpuNetworkConfig.AdminInterface.Mtu)
 }
 
 // TestAPIDpuMachine_FromProto_NilMachine guards against a panic when a

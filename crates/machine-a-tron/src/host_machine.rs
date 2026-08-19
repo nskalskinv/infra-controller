@@ -38,14 +38,12 @@ use crate::api_client::ApiClient;
 use crate::config::{self, MachineATronContext, MachineConfig, PersistedDevice};
 use crate::dhcp_wrapper::{DhcpRelayResult, DhcpResponseInfo, DpuDhcpRelay};
 use crate::dpu_machine::{DpuMachine, DpuMachineHandle};
-use crate::machine_state_machine::{
-    InfinibandPortState, LiveState, MachineStateMachine, PersistedMachine,
-};
-use crate::saturating_add_duration_to_instant;
+use crate::machine_state_machine::{LiveState, MachineStateMachine, PersistedMachine};
 use crate::status::{
     BmcStatus, DeviceKind, DeviceStatus, DeviceStatusConfig, EndpointStatus, InfinibandPortStatus,
 };
 use crate::tui::{HostDetails, UiUpdate};
+use crate::{Guid, InfinibandPortState, saturating_add_duration_to_instant};
 
 pub(super) struct HostMachine {
     mat_id: Uuid,
@@ -155,6 +153,7 @@ impl HostMachine {
             .collect::<Vec<_>>();
         let mut host_info = HostMachineInfo {
             hw_type: persisted_device.hw_type,
+            rack_placement: config.rack_placement,
             bmc_mac_address: persisted_device.bmc_mac_address,
             serial: persisted_device.serial.clone(),
             dpus: persisted_device
@@ -261,6 +260,7 @@ impl HostMachine {
             mac_pool,
             hw_pool_config,
         );
+        host_info.rack_placement = config.rack_placement;
         host_info.initial_host_firmware = config.host_firmware_versions.clone();
         host_info.desired_host_firmware = desired_host_firmware(config.hw_type, &app_context);
         let dpus = dpu_machines
@@ -645,6 +645,7 @@ impl MachineHandle {
             mat_id: Uuid::new_v4(),
             host_info: HostMachineInfo {
                 hw_type: Default::default(),
+                rack_placement: None,
                 bmc_mac_address: mac,
                 serial: "test-host".to_string(),
                 dpus: Vec::new(),
@@ -741,33 +742,26 @@ impl MachineHandle {
 
     pub(super) fn set_infiniband_port_state(
         &self,
-        guid: &str,
+        guid: Guid,
         state: InfinibandPortState,
     ) -> eyre::Result<()> {
         let mut live_state = self.0.live_state.write().unwrap();
         let port_state = live_state
             .infiniband_port_states
-            .get_mut(guid)
-            .ok_or_else(|| eyre::eyre!("InfiniBand port {guid} not found"))?;
+            .get_mut(&guid)
+            .ok_or_else(|| eyre::eyre!("infiniband port {guid} not found"))?;
         *port_state = state;
         Ok(())
     }
 
     pub(super) fn status(&self, config: &DeviceStatusConfig) -> DeviceStatus {
         let live_state = self.0.live_state.read().unwrap();
-        let infiniband_ports = self
-            .0
-            .host_info
-            .infiniband_port_guids()
-            .into_iter()
-            .map(|guid| InfinibandPortStatus {
-                state: *live_state
-                    .infiniband_port_states
-                    .get(&guid)
-                    .expect("live InfiniBand state initialized from static machine info"),
-                guid,
-            })
+        let mut infiniband_ports = live_state
+            .infiniband_port_states
+            .iter()
+            .map(|(&guid, &state)| InfinibandPortStatus { guid, state })
             .collect::<Vec<_>>();
+        infiniband_ports.sort_by_key(|port| port.guid);
         DeviceStatus {
             mat_id: self.0.mat_id.to_string(),
             device_kind: DeviceKind::Machine,

@@ -439,6 +439,9 @@ impl ManagedHostStateSnapshot {
         pick_boot_interface_pair(&self.host_snapshot.status.interfaces)
     }
 
+    // We are examining the dpa_interface_snapshots of the MH to see if has
+    // any NICs of type Astra. This function cannot be used during machine ingestion
+    // when the dpa_interfaces table does not yet have any entries for the host.
     pub fn has_astra_nics(&self) -> bool {
         self.dpa_interface_snapshots
             .iter()
@@ -3322,7 +3325,6 @@ pub fn dpf_based_dpu_provisioning_possible(
         );
         tracing::warn!(
             machine_id = %state.host_snapshot.id,
-            removed_in = "v2.1",
             docs = "https://docs.nvidia.com/infra-controller/documentation/getting-started/installation-options/dpf-setup",
             "iPXE provisioning strategy (internally) is deprecated; enable DPF management for DPUs to migrate"
         );
@@ -3354,7 +3356,6 @@ pub fn dpf_based_dpu_provisioning_possible(
         );
         tracing::warn!(
             machine_id = %state.host_snapshot.id,
-            removed_in = "v2.1",
             docs = "https://docs.nvidia.com/infra-controller/documentation/getting-started/installation-options/dpf-setup",
             "iPXE provisioning strategy (internally) is deprecated; enable DPF management for DPUs to migrate"
         );
@@ -3376,7 +3377,6 @@ pub fn dpf_based_dpu_provisioning_possible(
         );
         tracing::warn!(
             machine_id = %state.host_snapshot.id,
-            removed_in = "v2.1",
             docs = "https://docs.nvidia.com/infra-controller/documentation/getting-started/installation-options/dpf-setup",
             "iPXE provisioning strategy (internally) is deprecated; enable DPF management for DPUs to migrate"
         );
@@ -3394,7 +3394,6 @@ pub fn dpf_based_dpu_provisioning_possible(
         );
         tracing::warn!(
             machine_id = %state.host_snapshot.id,
-            removed_in = "v2.1",
             docs = "https://docs.nvidia.com/infra-controller/documentation/getting-started/installation-options/dpf-setup",
             "iPXE provisioning strategy (internally) is deprecated; enable DPF management for DPUs to migrate"
         );

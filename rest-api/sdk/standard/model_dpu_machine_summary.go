@@ -546,7 +546,6 @@ func (o *DpuMachineSummary) UnmarshalJSON(data []byte) (err error) {
 	varDpuMachineSummary := _DpuMachineSummary{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&varDpuMachineSummary)
 
 	if err != nil {
