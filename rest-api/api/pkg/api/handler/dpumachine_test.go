@@ -91,12 +91,19 @@ func TestGetAllDpuMachinesHandler_Handle(t *testing.T) {
 
 func TestGetAllDpuMachinesHandler_HandleRejectsInvalidRequests(t *testing.T) {
 	tests := []struct {
-		name   string
-		roles  []string
-		target string
-		status int
+		name    string
+		roles   []string
+		target  string
+		status  int
+		message string
 	}{
-		{name: "missing site ID", roles: []string{authz.ProviderAdminRole}, target: "/", status: http.StatusBadRequest},
+		{
+			name:    "missing site ID",
+			roles:   []string{authz.ProviderAdminRole},
+			target:  "/",
+			status:  http.StatusBadRequest,
+			message: "Error validating DPU Machine retrieval request data",
+		},
 		{name: "unknown query", roles: []string{authz.ProviderAdminRole}, target: "/?siteId=00000000-0000-0000-0000-000000000001&unknown=true", status: http.StatusBadRequest},
 		{name: "tenant role", roles: []string{authz.TenantAdminRole}, status: http.StatusForbidden},
 	}
@@ -111,6 +118,13 @@ func TestGetAllDpuMachinesHandler_HandleRejectsInvalidRequests(t *testing.T) {
 			rec := fixture.request(t, target)
 			assert.Equal(t, tt.status, rec.Code)
 			assert.Empty(t, fixture.proxiedReqs)
+			if tt.message != "" {
+				var apiErr struct {
+					Message string `json:"message"`
+				}
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
+				assert.Equal(t, tt.message, apiErr.Message)
+			}
 		})
 	}
 }

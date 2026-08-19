@@ -189,3 +189,28 @@ func TestAPIDpuMachine_DpuNetworkConfigJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIDpuMachine_ZeroValueJSON(t *testing.T) {
+	encoded, err := json.Marshal(APIDpuMachine{})
+	require.NoError(t, err)
+
+	var response map[string]interface{}
+	require.NoError(t, json.Unmarshal(encoded, &response))
+	assert.Equal(t, map[string]interface{}{
+		"id":                       "",
+		"infrastructureProviderId": "",
+		"siteId":                   "",
+		"hostMachineId":            "",
+		"dpuAgentVersion":          "",
+		"bmcInfo":                  nil,
+		"dmiData":                  nil,
+		"interfaces":               nil,
+		"softwareComponents":       nil,
+		"health":                   nil,
+		"labels":                   nil,
+		"state":                    "",
+		"dpuNetworkConfig":         nil,
+		"lastRebooted":             nil,
+		"placementInRack":          nil,
+	}, response)
+}

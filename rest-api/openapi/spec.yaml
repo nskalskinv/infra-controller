@@ -10333,11 +10333,17 @@ paths:
           description: ID of the Site
         - schema:
             type: integer
+            example: 1
+            default: 1
+            minimum: 1
           in: query
           name: pageNumber
           description: Page number for pagination query
         - schema:
             type: integer
+            minimum: 1
+            maximum: 100
+            example: 20
           in: query
           name: pageSize
           description: Page size for pagination query
@@ -10358,7 +10364,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/DpuMachine'
+                  $ref: '#/components/schemas/DpuMachineSummary'
           headers:
             X-Pagination:
               schema:
@@ -10415,6 +10421,11 @@ paths:
                       siteId: 60189e9c-7d12-438c-b9ca-6998d9c364b1
                       hostMachineId: fm200hkq8xncf7tgm9plurt4smono52pqvv2gxt97pyk2398qjk2a73qjf64
                       dpuAgentVersion: 1.0.0
+                      bmcInfo: {}
+                      dmiData: {}
+                      interfaces: []
+                      softwareComponents: []
+                      health: {}
                       state: Ready
                       labels:
                         env: prod
@@ -10447,6 +10458,10 @@ paths:
                             fqdn: tenant-vm.example.com
                             vpcVni: 6000
                             isL2Segment: false
+                      lastRebooted: null
+                      placementInRack:
+                        slotNumber: 1
+                        trayIndex: 0
         '400':
           $ref: '#/components/responses/GenericHttpError'
         '403':
@@ -28548,9 +28563,7 @@ components:
           type: string
           description: Lifecycle state of the DPU
         dpuNetworkConfig:
-          oneOf:
-            - $ref: '#/components/schemas/DpuNetworkConfig'
-            - type: 'null'
+          $ref: '#/components/schemas/DpuNetworkConfig'
           description: Network configuration fields exposed by the REST API
         lastRebooted:
           type:
@@ -28568,6 +28581,116 @@ components:
         - hostMachineId
         - state
         - dpuNetworkConfig
+    DpuMachineSummary:
+      title: DpuMachineSummary
+      type: object
+      description: A DPU Machine returned by the site-wide list. Network configuration is unavailable and is always null.
+      x-go-has-nullable-required-properties: true
+      x-go-nullable-required-properties:
+        - bmcInfo
+        - dmiData
+        - interfaces
+        - softwareComponents
+        - health
+        - labels
+        - dpuNetworkConfig
+        - lastRebooted
+        - placementInRack
+      properties:
+        id:
+          type: string
+          description: ID of the DPU Machine
+        infrastructureProviderId:
+          type: string
+          format: uuid
+          description: ID of the Infrastructure Provider that owns the host Machine
+        siteId:
+          type: string
+          format: uuid
+          description: ID of the Site that the host Machine belongs to
+        hostMachineId:
+          type: string
+          description: ID of the host Machine that this DPU is attached to
+        dpuAgentVersion:
+          type: string
+          description: Version of the DPU agent running on the DPU
+        bmcInfo:
+          oneOf:
+            - $ref: '#/components/schemas/MachineBMCInfo'
+            - type: 'null'
+          description: BMC (Baseboard Management Controller) information for the DPU
+        dmiData:
+          oneOf:
+            - $ref: '#/components/schemas/MachineDMIData'
+            - type: 'null'
+          description: DMI (Desktop Management Interface) data reported for the DPU
+        interfaces:
+          x-go-required-nullable: true
+          type:
+            - array
+            - 'null'
+          items:
+            $ref: '#/components/schemas/DpuMachineInterface'
+          description: Interfaces reported on the DPU
+        softwareComponents:
+          x-go-required-nullable: true
+          type:
+            - array
+            - 'null'
+          items:
+            $ref: '#/components/schemas/DpuMachineSoftwareComponent'
+          description: Software components reported on the DPU
+        health:
+          oneOf:
+            - $ref: '#/components/schemas/MachineHealth'
+            - type: 'null'
+          description: Health information for the DPU
+        labels:
+          x-go-required-nullable: true
+          type:
+            - object
+            - 'null'
+          additionalProperties:
+            type: string
+          description: Labels associated with the DPU
+        state:
+          type: string
+          description: Lifecycle state of the DPU
+        dpuNetworkConfig:
+          x-go-required-nullable: true
+          type:
+            - object
+            - 'null'
+          const: null
+          additionalProperties: false
+          description: Network configuration is unavailable in the site-wide list response
+        lastRebooted:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Last reboot timestamp
+        placementInRack:
+          oneOf:
+            - $ref: '#/components/schemas/PlacementInRack'
+            - type: 'null'
+          description: 'Physical placement of the DPU Machine within its Rack, when known'
+      required:
+        - id
+        - infrastructureProviderId
+        - siteId
+        - hostMachineId
+        - dpuAgentVersion
+        - bmcInfo
+        - dmiData
+        - interfaces
+        - softwareComponents
+        - health
+        - labels
+        - state
+        - dpuNetworkConfig
+        - lastRebooted
+        - placementInRack
     DpuMachineInterface:
       title: DpuMachineInterface
       type: object

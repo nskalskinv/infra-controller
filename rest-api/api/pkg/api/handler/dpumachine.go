@@ -55,32 +55,37 @@ func NewGetAllDpuMachinesHandler(dbSession *cdb.Session, scp *sc.ClientPool) Get
 // @Param orderBy query string false "DPU Machine ID ordering" Enums(ID_ASC, ID_DESC) default(ID_ASC)
 // @Success 200 {array} model.APIDpuMachine
 // @Router /v2/org/{org}/nico/dpu [get]
-func (h GetAllDpuMachinesHandler) Handle(c echo.Context) error {
-	org, dbUser, ctx, logger, handlerSpan := common.SetupHandler("DpuMachine", "GetAll", c, h.tracerSpan)
+func (gadmh GetAllDpuMachinesHandler) Handle(c echo.Context) error {
+	org, dbUser, ctx, logger, handlerSpan := common.SetupHandler("DpuMachine", "GetAll", c, gadmh.tracerSpan)
 	if handlerSpan != nil {
 		defer handlerSpan.End()
 	}
 
 	apiRequest := model.APIGetAllDpuMachineRequest{}
-	if err := common.ValidateKnownQueryParams(c.QueryParams(), apiRequest, pagination.PageRequest{}); err != nil {
+	err := common.ValidateKnownQueryParams(c.QueryParams(), apiRequest, pagination.PageRequest{})
+	if err != nil {
 		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
 	}
-	if err := c.Bind(&apiRequest); err != nil {
-		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, "Failed to parse request data", nil)
+	err = c.Bind(&apiRequest)
+	if err != nil {
+		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, "Failed to parse request data, potentially invalid structure", nil)
 	}
-	if err := apiRequest.Validate(); err != nil {
-		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+	err = apiRequest.Validate()
+	if err != nil {
+		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, "Error validating DPU Machine retrieval request data", err)
 	}
 
 	pageRequest := pagination.PageRequest{}
-	if err := c.Bind(&pageRequest); err != nil {
+	err = c.Bind(&pageRequest)
+	if err != nil {
 		logger.Warn().Err(err).Msg("error binding pagination request data into API model")
 		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, "Failed to parse request pagination data", nil)
 	}
 	if pageRequest.OrderByStr == nil {
 		pageRequest.OrderByStr = cutil.GetPtr(dpuMachineOrderByIDAsc)
 	}
-	if err := pageRequest.Validate([]string{dpuMachineOrderByFieldID}); err != nil {
+	err = pageRequest.Validate([]string{dpuMachineOrderByFieldID})
+	if err != nil {
 		logger.Warn().Err(err).Msg("error validating pagination request data")
 		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, "Failed to validate pagination request data", err)
 	}
@@ -88,8 +93,8 @@ func (h GetAllDpuMachinesHandler) Handle(c echo.Context) error {
 	stc, siteID, apiErr := common.AuthorizeProviderSiteForCore(common.AuthorizeProviderSiteForCoreInput{
 		Ctx:       ctx,
 		Logger:    logger,
-		DBSession: h.dbSession,
-		SCP:       h.scp,
+		DBSession: gadmh.dbSession,
+		SCP:       gadmh.scp,
 		Org:       org,
 		User:      dbUser,
 		SiteID:    apiRequest.SiteID,
@@ -97,7 +102,7 @@ func (h GetAllDpuMachinesHandler) Handle(c echo.Context) error {
 	if apiErr != nil {
 		return cutil.NewAPIErrorResponse(c, apiErr.Code, apiErr.Message, apiErr.Data)
 	}
-	site, err := common.GetSiteFromIDString(ctx, nil, siteID, h.dbSession)
+	site, err := common.GetSiteFromIDString(ctx, nil, siteID, gadmh.dbSession)
 	if err != nil {
 		logger.Error().Err(err).Msg("failed to retrieve authorized Site")
 		return cutil.NewAPIErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve Site due to DB error", nil)

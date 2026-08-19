@@ -221,7 +221,7 @@ func (r ApiGetAllDpuMachinesRequest) OrderBy(orderBy string) ApiGetAllDpuMachine
 	return r
 }
 
-func (r ApiGetAllDpuMachinesRequest) Execute() ([]DpuMachine, *http.Response, error) {
+func (r ApiGetAllDpuMachinesRequest) Execute() ([]DpuMachineSummary, *http.Response, error) {
 	return r.ApiService.GetAllDpuMachinesExecute(r)
 }
 
@@ -248,13 +248,13 @@ func (a *MachineAPIService) GetAllDpuMachines(ctx context.Context, org string) A
 
 // Execute executes the request
 //
-//	@return []DpuMachine
-func (a *MachineAPIService) GetAllDpuMachinesExecute(r ApiGetAllDpuMachinesRequest) ([]DpuMachine, *http.Response, error) {
+//	@return []DpuMachineSummary
+func (a *MachineAPIService) GetAllDpuMachinesExecute(r ApiGetAllDpuMachinesRequest) ([]DpuMachineSummary, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodGet
 		localVarPostBody    interface{}
 		formFiles           []formFile
-		localVarReturnValue []DpuMachine
+		localVarReturnValue []DpuMachineSummary
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MachineAPIService.GetAllDpuMachines")
@@ -275,6 +275,10 @@ func (a *MachineAPIService) GetAllDpuMachinesExecute(r ApiGetAllDpuMachinesReque
 	parameterAddToHeaderOrQuery(localVarQueryParams, "siteId", r.siteId, "form", "")
 	if r.pageNumber != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "pageNumber", r.pageNumber, "form", "")
+	} else {
+		var defaultValue int32 = 1
+		parameterAddToHeaderOrQuery(localVarQueryParams, "pageNumber", defaultValue, "form", "")
+		r.pageNumber = &defaultValue
 	}
 	if r.pageSize != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "pageSize", r.pageSize, "form", "")

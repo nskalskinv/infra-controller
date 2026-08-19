@@ -50,7 +50,7 @@ type DpuMachine struct {
 	// Lifecycle state of the DPU
 	State string `json:"state"`
 	// Network configuration fields exposed by the REST API
-	DpuNetworkConfig NullableDpuNetworkConfig `json:"dpuNetworkConfig"`
+	DpuNetworkConfig DpuNetworkConfig `json:"dpuNetworkConfig"`
 	// Last reboot timestamp
 	LastRebooted NullableTime `json:"lastRebooted,omitempty"`
 	// Physical placement of the DPU Machine within its Rack, when known
@@ -63,7 +63,7 @@ type _DpuMachine DpuMachine
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewDpuMachine(id string, infrastructureProviderId string, siteId string, hostMachineId string, state string, dpuNetworkConfig NullableDpuNetworkConfig) *DpuMachine {
+func NewDpuMachine(id string, infrastructureProviderId string, siteId string, hostMachineId string, state string, dpuNetworkConfig DpuNetworkConfig) *DpuMachine {
 	this := DpuMachine{}
 	this.Id = id
 	this.InfrastructureProviderId = infrastructureProviderId
@@ -427,29 +427,27 @@ func (o *DpuMachine) SetState(v string) {
 }
 
 // GetDpuNetworkConfig returns the DpuNetworkConfig field value
-// If the value is explicit nil, the zero value for DpuNetworkConfig will be returned
 func (o *DpuMachine) GetDpuNetworkConfig() DpuNetworkConfig {
-	if o == nil || o.DpuNetworkConfig.Get() == nil {
+	if o == nil {
 		var ret DpuNetworkConfig
 		return ret
 	}
 
-	return *o.DpuNetworkConfig.Get()
+	return o.DpuNetworkConfig
 }
 
 // GetDpuNetworkConfigOk returns a tuple with the DpuNetworkConfig field value
 // and a boolean to check if the value has been set.
-// NOTE: If the value is an explicit nil, `nil, true` will be returned
 func (o *DpuMachine) GetDpuNetworkConfigOk() (*DpuNetworkConfig, bool) {
 	if o == nil {
 		return nil, false
 	}
-	return o.DpuNetworkConfig.Get(), o.DpuNetworkConfig.IsSet()
+	return &o.DpuNetworkConfig, true
 }
 
 // SetDpuNetworkConfig sets field value
 func (o *DpuMachine) SetDpuNetworkConfig(v DpuNetworkConfig) {
-	o.DpuNetworkConfig.Set(&v)
+	o.DpuNetworkConfig = v
 }
 
 // GetLastRebooted returns the LastRebooted field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -563,7 +561,7 @@ func (o DpuMachine) ToMap() (map[string]interface{}, error) {
 		toSerialize["labels"] = o.Labels
 	}
 	toSerialize["state"] = o.State
-	toSerialize["dpuNetworkConfig"] = o.DpuNetworkConfig.Get()
+	toSerialize["dpuNetworkConfig"] = o.DpuNetworkConfig
 	if o.LastRebooted.IsSet() {
 		toSerialize["lastRebooted"] = o.LastRebooted.Get()
 	}
