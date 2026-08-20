@@ -394,6 +394,9 @@ Endpoint tests should follow the changed surface, not just compile it:
   that transition.
 - Route tests and OpenAPI checks are part of the endpoint change; generated SDK
   updates belong in the same change only when the repo workflow requires them.
+- When one response model serves endpoints with different nullability
+  contracts, preserve each endpoint's schema in its constructor or use distinct
+  models. Test unavailable values at every affected response boundary.
 
 ### Prefer range-based iteration over C-style `for` loops
 

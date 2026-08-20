@@ -208,6 +208,8 @@ func TestNewAPIDpuMachines(t *testing.T) {
 	assert.Equal(t, ctx.HostMachineID, apiDpuMachines[0].HostMachineID)
 	assert.Equal(t, ctx.SiteID.String(), apiDpuMachines[0].SiteID)
 	assert.Equal(t, ctx.InfrastructureProviderID.String(), apiDpuMachines[0].InfrastructureProviderID)
+	assert.NotNil(t, apiDpuMachines[0].DpuNetworkConfig)
+	assert.NotNil(t, apiDpuMachines[1].DpuNetworkConfig)
 }
 
 func TestAPIDpuMachine_DpuNetworkConfigJSON(t *testing.T) {

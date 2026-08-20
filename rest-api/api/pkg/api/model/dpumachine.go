@@ -4,6 +4,7 @@
 package model
 
 import (
+	"cmp"
 	"time"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
@@ -461,6 +462,7 @@ func NewAPIDpuMachines(protoDpuMachines []*corev1.DpuMachine, ctx APIDpuMachineP
 		}
 		apiDpuMachine := APIDpuMachine{}
 		apiDpuMachine.FromProto(protoDpuMachine, ctx)
+		apiDpuMachine.DpuNetworkConfig = cmp.Or(apiDpuMachine.DpuNetworkConfig, &APIDpuNetworkConfig{})
 		apiDpuMachines = append(apiDpuMachines, apiDpuMachine)
 	}
 	return apiDpuMachines
