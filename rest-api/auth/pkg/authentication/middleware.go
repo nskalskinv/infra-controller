@@ -74,6 +74,13 @@ func AuthProcessor(c echo.Context, joCfg *config.JWTOriginConfig) *util.APIError
 	// Parse the token without validating it yet to get the issuer
 	unverifiedToken, _, uErr := new(jwt.Parser).ParseUnverified(tokenStr, jwt.MapClaims{})
 	if uErr != nil {
+		// A bearer that is not a JWT is an NGC API key when a kas origin issuer is
+		// configured.
+		if processor := joCfg.GetProcessorByOrigin(config.TokenOriginKas); processor != nil {
+			_, apiErr := processor.ProcessToken(c, tokenStr, joCfg.GetFirstConfigByOrigin(config.TokenOriginKas), logger)
+			return apiErr
+		}
+
 		logger.Error().Err(uErr).Msg("Error parsing the token claims")
 		return util.NewAPIError(http.StatusUnauthorized, "Error parsing the token claims", nil)
 	}

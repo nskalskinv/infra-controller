@@ -140,7 +140,7 @@ const (
 // This is the preferred configuration format that supports claim mappings
 type IssuerConfig struct {
 	Name                         string               `mapstructure:"name"`
-	Origin                       string               `mapstructure:"origin"` // String: "kas-legacy", "kas-ssa", "keycloak", "custom"
+	Origin                       string               `mapstructure:"origin"` // String: "kas-legacy", "kas-ssa", "keycloak", "custom", "kas"
 	JWKS                         string               `mapstructure:"jwks"`
 	Issuer                       string               `mapstructure:"issuer"`
 	ServiceAccount               bool                 `mapstructure:"serviceAccount"`
@@ -424,10 +424,17 @@ func (c *Config) GetOrInitJWTOriginConfig() *cauth.JWTOriginConfig {
 	if c.JwtOriginConfig == nil {
 		c.JwtOriginConfig = cauth.NewJWTOriginConfig()
 
-		// Load and validate issuers config
+		// Issuers were already validated when the config was loaded
 		issuersConfig := c.GetIssuersConfig()
-		if err := c.ValidateIssuersConfig(issuersConfig); err != nil {
-			log.Panic().Err(err).Msg("Invalid issuers configuration")
+
+		// A kas origin issuer authenticates NGC API keys and disregards every other
+		// issuer, since no JWT can be verified without a JWKS endpoint
+		if kasIssuer, found := kasOriginIssuer(issuersConfig); found {
+			if len(issuersConfig) > 1 {
+				log.Warn().Str("issuer", kasIssuer.Name).Int("disregarded", len(issuersConfig)-1).
+					Msg("kas origin issuer configured, disregarding all other issuers")
+			}
+			issuersConfig = []IssuerConfig{kasIssuer}
 		}
 
 		// First pass: collect all static org names (lowercased) from all issuers
@@ -546,6 +553,12 @@ func (c *Config) GetIssuersConfig() []IssuerConfig {
 
 // ValidateIssuersConfig validates the issuer configurations
 func (c *Config) ValidateIssuersConfig(issuers []IssuerConfig) error {
+	if kasOriginIssuer, found := kasOriginIssuer(issuers); found && len(issuers) > 1 {
+		return fmt.Errorf("when the kas origin issuer is configured, only one issuer is allowed, but %d were configured", len(issuers))
+	} else if found {
+		return validateKasOriginIssuer(kasOriginIssuer)
+	}
+
 	seenNames := make(map[string]bool)
 	seenURLs := make(map[string]bool)
 	seenStaticOrgs := make(map[string]bool)
@@ -670,6 +683,39 @@ func (c *Config) ValidateIssuersConfig(issuers []IssuerConfig) error {
 	}
 
 	return nil
+}
+
+// validateKasOriginIssuer validates an issuer with the kas origin, which authenticates
+// NGC API keys directly and therefore has no JWKS endpoint, issuer claim or claim mappings
+func validateKasOriginIssuer(issuer IssuerConfig) error {
+	if issuer.JWKS != "" {
+		return fmt.Errorf("issuer %s: jwks URL is not supported for the %s origin", issuer.Name, cauth.TokenOriginKas)
+	}
+
+	if issuer.Issuer != "" {
+		return fmt.Errorf("issuer %s: issuer is not supported for the %s origin", issuer.Name, cauth.TokenOriginKas)
+	}
+
+	if len(issuer.ClaimMappings) > 0 {
+		return fmt.Errorf("issuer %s: claimMappings are not supported for the %s origin", issuer.Name, cauth.TokenOriginKas)
+	}
+
+	if issuer.ServiceAccount {
+		return fmt.Errorf("issuer %s: serviceAccount is not supported for the %s origin", issuer.Name, cauth.TokenOriginKas)
+	}
+
+	return nil
+}
+
+// kasOriginIssuer returns the first issuer with the kas origin, which takes precedence
+// over every other configured issuer
+func kasOriginIssuer(issuers []IssuerConfig) (IssuerConfig, bool) {
+	for _, issuer := range issuers {
+		if strings.ToLower(issuer.Origin) == cauth.TokenOriginKas {
+			return issuer, true
+		}
+	}
+	return IssuerConfig{}, false
 }
 
 /* Config getters */

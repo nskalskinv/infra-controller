@@ -18,6 +18,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/bufbuild/buf v1.72.0
 	github.com/deckarep/golang-set/v2 v2.8.0
+	github.com/elastic/go-freelru v0.16.0
 	github.com/felixge/httpsnoop v1.1.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/getkin/kin-openapi v0.140.0

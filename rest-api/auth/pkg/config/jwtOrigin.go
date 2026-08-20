@@ -13,19 +13,20 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// TokenOrigin constants define the source of JWT tokens
+// TokenOrigin constants define the source of bearer tokens
 // These string values correspond to what's configured in the issuer configmap
 const (
 	TokenOriginKasLegacy = "kas-legacy" // Legacy KAS tokens
 	TokenOriginKasSsa    = "kas-ssa"    // KAS SSA tokens
 	TokenOriginKeycloak  = "keycloak"   // Keycloak tokens
 	TokenOriginCustom    = "custom"     // Custom/third-party tokens (default if not specified)
+	TokenOriginKas       = "kas"        // NGC API keys presented as bearer credentials
 )
 
 // AllowedOrigins is the list of valid token origins for the service
-var AllowedOrigins = []string{TokenOriginKasLegacy, TokenOriginKasSsa, TokenOriginKeycloak, TokenOriginCustom}
+var AllowedOrigins = []string{TokenOriginKasLegacy, TokenOriginKasSsa, TokenOriginKeycloak, TokenOriginCustom, TokenOriginKas}
 
-// TokenProcessor interface for processing JWT tokens
+// TokenProcessor interface for processing bearer tokens
 type TokenProcessor interface {
 	ProcessToken(c echo.Context, tokenStr string, jwksConfig *JwksConfig, logger zerolog.Logger) (*cdbm.User, *util.APIError)
 }
