@@ -74,6 +74,16 @@ Top-level `global:` values are automatically passed to all subcharts.
 | `global.spiffe.trustDomain` | SPIFFE trust domain for mTLS | `nico.local` |
 | `global.labels` | Common labels applied to all resources | See `values.yaml` |
 
+### Static UFM credentials
+
+To use an operator-managed UFM bearer token instead of placing the token in
+Helm values or NICo TOML, configure
+`nico-api.credentials.file.existingSecret`. The chart mounts only the selected
+key of that existing Secret and configures NICo to watch the mounted file. See
+[PREREQUISITES.md](./PREREQUISITES.md#ufm-credentials-optional) for the exact
+Secret file schema, Helm values, default polling interval, and rotation
+behavior.
+
 ### NVSwitch mTLS Certificates
 
 `nico-api.nvSwitchTls` can ask cert-manager to issue NICo's dedicated NMX-C
@@ -306,7 +316,7 @@ nico-dns:
 
 ### Service Dependencies
 
-```
+```text
                          +------------------+
                          |   nico-api    |  <-- PostgreSQL, Vault
                          +--------+---------+

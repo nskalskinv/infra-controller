@@ -266,6 +266,18 @@ env:
   RUST_BACKTRACE: "full"
   RUST_LIB_BACKTRACE: "0"
 
+## Optional operator-managed static credential file. The chart mounts one key
+## from an existing Secret and configures nico-api to watch it; no credential
+## content is rendered into this chart's ConfigMaps or values. The file can
+## provide UFM tokens under `ufm_auth_by_fabric`; see helm/PREREQUISITES.md.
+credentials:
+  file:
+    existingSecret:
+      name: ""
+      key: credentials.yaml
+    mountPath: /var/run/secrets/nico/credentials
+    pollInterval: "60s"
+
 ## Optional Figment dictionary for CARBIDE_API_DSX_EXCHANGE_EVENT_BUS.
 dsxExchangeEventBusConfig: ""
 

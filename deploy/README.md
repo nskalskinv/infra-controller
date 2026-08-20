@@ -114,6 +114,8 @@ Path: `deploy/nico-base/api/`
     - `VAULT_SERVICE`
     - `NICO_VAULT_MOUNT`
     - `NICO_VAULT_PKI_MOUNT`
+- **Optional UFM static credentials**
+  - Secret `ufm-credentials` with an operator-managed credential-file key (commonly `credentials.yaml`); the token is not placed in `nico-api-site-config.toml`.
 - **Root CA bundle**
   - Secret `<NICO_ROOT_CA_SECRET>` mounted where `carbide-api-config.toml` expects it.
 
@@ -126,6 +128,7 @@ Path: `deploy/nico-base/api/`
   - site explorer enablement
   - TLS paths under `[tls]` (aligned with the SPIFFE Secret mount)
   - Casbin policy path under `[auth]`
+  - `[credentials.file]` only for the path and polling interval of a mounted UFM credential file; never put the bearer token in this ConfigMap.
 - For SA / lab environments it is common to run with **permissive authorization** (for example by enabling an “allow all trusted certs” rule in the Casbin policy). A hardened deployment should tighten these rules.
 
 **Quick start**
@@ -133,11 +136,84 @@ Path: `deploy/nico-base/api/`
 1. Create the DB credentials Secret and DB endpoint ConfigMap for your environment.
 2. Create the Vault token/AppRole Secret and Vault cluster ConfigMap.
 3. Optionally add a `nico-api-site-config.toml` via an overlay and include it in `nico-api-site-config-files`.
-4. Apply the base (or your overlay):
+4. Optionally mount static UFM credentials as described below.
+5. Apply the base (or your overlay):
 
    ```bash
    kubectl apply -k deploy/nico-base/api -n <NICO_NAMESPACE>
    ```
+
+#### Optional static UFM credentials
+
+Create a Secret from an operator-managed YAML or JSON file, not from a value
+committed to the overlay. The file for a fabric named `default` has this YAML
+shape; the `password` value is the UFM bearer token and `username` is ignored
+by UFM.
+
+```yaml
+ufm_auth_by_fabric:
+  default:
+    username: ignored-by-ufm
+    password: "<UFM bearer token>"
+```
+
+```bash
+kubectl create secret generic ufm-credentials \
+  --namespace <NICO_NAMESPACE> \
+  --from-file=credentials.yaml=./ufm-credentials.yaml
+```
+
+In an overlay, add a site config file and a strategic-merge patch, then list
+both in `kustomization.yaml`:
+
+```toml
+# nico-api-site-config.toml
+[credentials.file]
+path = "/var/run/secrets/nico/ufm/credentials.yaml"
+poll_interval = "60s"
+```
+
+```yaml
+# kustomization.yaml
+resources:
+  - ../../nico-base/api
+configMapGenerator:
+  - name: nico-api-site-config-files
+    behavior: merge
+    files:
+      - nico-api-site-config.toml
+patches:
+  - path: nico-api-ufm-credentials.yaml
+```
+
+```yaml
+# nico-api-ufm-credentials.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nico-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: nico-api
+          volumeMounts:
+            - name: ufm-credentials
+              mountPath: /var/run/secrets/nico/ufm
+              readOnly: true
+      volumes:
+        - name: ufm-credentials
+          secret:
+            secretName: ufm-credentials
+            items:
+              - key: credentials.yaml
+                path: credentials.yaml
+```
+
+The `default` entry must match the name under `[ib_fabrics.<name>]`. NICo
+watches and polls the mounted file, so a valid projected-Secret replacement is
+used without a pod restart. An invalid replacement keeps the last valid
+credential active.
 
 ---
 

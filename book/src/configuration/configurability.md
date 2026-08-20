@@ -796,10 +796,52 @@ advertised. Both are documented field-by-field in
 ### InfiniBand fabric definitions — `[ib_fabrics.<name>]`
 
 `[ib_config]` toggles InfiniBand support fleet-wide; `[ib_fabrics.<name>]`
-defines a specific UFM-managed fabric. Currently exactly one fabric is
-supported. Required fields: UFM endpoint, credentials (username + password,
-or token), MGMT IB subnet, GUID prefix. See
+defines a specific UFM-managed fabric. Exactly one fabric is supported. Each
+definition requires one fully-qualified UFM endpoint and its
+PKey ranges. UFM credentials are configured separately in
+`[credentials.file]`. See
 [`crates/api-core/src/cfg/README.md` → NicoConfig](../../../crates/api-core/src/cfg/README.md#nicoconfig-top-level).
+
+### Static UFM credentials — `[credentials.file]`
+
+`[credentials.file]` names a JSON or YAML credential file that NICo watches at
+runtime. It is not the existing `[auth]` section: `[auth]` configures API
+authentication and authorization. Keep the UFM bearer token out of the TOML
+file and source control; mount the credential file from a Kubernetes Secret or
+another operator-managed secret store instead.
+
+```toml
+[credentials.file]
+path = "/var/run/secrets/nico/ufm/credentials.yaml"
+poll_interval = "60s"
+```
+
+`path` is required when the section is present and may be absolute or relative
+to NICo's working directory. `poll_interval` defaults to `60s`. NICo reads and
+parses the initial file during startup, so a missing or invalid file prevents
+startup.
+
+For a fabric named `default`, the mounted YAML file has this shape:
+
+```yaml
+ufm_auth_by_fabric:
+  default:
+    username: ignored-by-ufm
+    password: "<UFM bearer token>"
+```
+
+The `ufm_auth_by_fabric` key must match the name in `[ib_fabrics.<name>]`.
+`username` is required by the shared credential-file schema but UFM does not
+use it. NICo sends `password` as the UFM bearer token. JSON has the equivalent
+object shape.
+
+NICo watches the file and also polls it, so an atomically replaced Kubernetes
+projected Secret is loaded without a pod restart. A replacement is used only
+after it parses successfully; a failed reload emits the static-credential
+watcher failure metric and preserves the last valid value. The next UFM
+operation rebuilds its client when this token changes. When the watched file
+does not contain a credential for a fabric, NICo may still consult any
+configured credential backend after the file source.
 
 ### Operator dev / debug knobs
 
@@ -946,7 +988,7 @@ rules.
 
 `nico-pxe` also needs egress to wherever PXE artifacts are stored
 (typically the same cluster's nico-api or an external HTTP boot artifact
-server). See [`helm/PREREQUISITES.md` → Network Requirements](../../../helm/PREREQUISITES.md#6-network-requirements)
+server). See [`helm/PREREQUISITES.md` → Network Requirements](../../../helm/PREREQUISITES.md#7-network-requirements)
 for the layer-2 / broadcast-domain constraints on `nico-dhcp` /
 `nico-pxe`.
 
@@ -1071,7 +1113,8 @@ fabric_monitor_run_interval = "60s" # how often UFM is polled for fabric topolog
 
 The fabric monitor talks to UFM (Unified Fabric Manager) over its REST API
 to read partitions, map them to tenants, and enforce the per-tenant cap.
-Connection details (UFM host, credentials) live in `[ib_fabrics.<name>]`.
+The UFM endpoint lives in `[ib_fabrics.<name>]`; UFM bearer credentials live in
+the separately mounted `[credentials.file]` source described above.
 
 See [`crates/api-core/src/cfg/README.md` → IBFabricConfig](../../../crates/api-core/src/cfg/README.md#ibfabricconfig).
 

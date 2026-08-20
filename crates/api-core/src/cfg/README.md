@@ -137,6 +137,7 @@ Use `site_explorer.dpu_policy` instead.
 | `log_history` | `LogHistoryConfig` | *(default)* | `integrations` | In-memory log history for the admin web live log viewer at `/admin/logs` (see [LogHistoryConfig](#loghistoryconfig)). |
 | `tracing` | `TracingConfig` | *(default)* | `integrations` | OTLP trace export settings (see [TracingConfig](#tracingconfig)). |
 | `secrets` | `Option<SecretsConfig>` | — | `security` | Secrets backend configuration. When present, the credential reader chain and write target are operator-configured (see [SecretsConfig](#secretsconfig)). |
+| `credentials` | `CredentialsConfig` | *(default)* | `security` | Non-secret locations for operator-managed credentials. The optional watched file source is tried before configured credential backends (see [CredentialsConfig](#credentialsconfig)). |
 | `dhcp_lease_expiry_handling` | `bool` | `false` | `networking` | Enables IP cleanup when a DHCP lease expires. |
 | `certificates` | `CertificatesConfig` | *(default)* | `security` | Certificate vending backend, selected independently of the credential store; the default shares the credential Vault (see [CertificatesConfig](#certificatesconfig)). |
 | `allow_insecure_discovery` | `bool` | `false` | `machines` | Allows machines to submit discovery without enforcing the request comes from the expected IP address. Needed for *Integration tests only*, should otherwise not be used. |
@@ -939,6 +940,19 @@ be propagated there by DPF.
 | `writer` | `CredentialBackend` | `vault` | Where new credential writes go. Set to `postgres` to send new writes to the journal; independent of `backends`. |
 | `import_from` | `Option<ImportSource>` | — | A source backend to import secrets from at startup. Unset means a fresh site with nothing to import; unsupported values fail config parsing. |
 | `import_approach` | `ImportApproach` | `missing_only` | How to treat secrets that already exist in Postgres during import. |
+
+### `CredentialsConfig`
+
+| Field | Type | Default | Description |
+| ------- | ------ | --------- | ------------- |
+| `file` | `Option<CredentialFileSourceConfig>` | — | Optional watched JSON or YAML file containing operator-managed credentials. The application configuration contains only the source location, never credential values (see [CredentialFileSourceConfig](#credentialfilesourceconfig)). |
+
+### `CredentialFileSourceConfig`
+
+| Field | Type | Default | Description |
+| ------- | ------ | --------- | ------------- |
+| `path` | `PathBuf` | **required when `[credentials.file]` is present** | Absolute or working-directory-relative path to the static credential file. NICo must be able to read and parse it at startup. |
+| `poll_interval` | `Duration` | `60s` | Interval for detecting file replacements that do not produce a filesystem event, including Kubernetes projected-Secret updates. Invalid reloads retain the previous valid credentials. |
 
 ### `KmsConfig`
 

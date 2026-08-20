@@ -878,6 +878,12 @@ pub struct CarbideConfig {
     /// env -> file -> vault behavior as when it is absent); see `SecretsConfig`.
     pub secrets: Option<SecretsConfig>,
 
+    /// Operator-managed static credential sources. These settings contain
+    /// only source locations and reload policy; credential values stay in the
+    /// referenced file or process environment.
+    #[serde(default)]
+    pub credentials: CredentialsConfig,
+
     /// IP cleanup on lease expiry
     #[serde(default)]
     pub dhcp_lease_expiry_handling: bool,
@@ -1020,6 +1026,45 @@ pub struct CertificatesConfig {
     /// `backend = "dedicated_vault"`, ignored otherwise.
     #[serde(default)]
     pub dedicated_vault: Option<DedicatedVaultSettings>,
+}
+
+/// Non-secret sources for operator-managed credentials.
+///
+/// The file source is optional. When present, it takes precedence over the
+/// legacy environment-selected file source and is read before credential
+/// backends such as Vault or Postgres.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialsConfig {
+    /// A watched file containing static credentials. Its contents are never
+    /// embedded in `CarbideConfig`.
+    #[serde(default)]
+    pub file: Option<CredentialFileSourceConfig>,
+}
+
+/// Configuration for the watched static-credentials file.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialFileSourceConfig {
+    /// Absolute or working-directory-relative path to the JSON or YAML file
+    /// containing static credentials.
+    pub path: PathBuf,
+
+    /// Interval used to detect projected-Secret replacements that do not emit
+    /// a filesystem watch event. Defaults to 60 seconds.
+    #[serde(
+        default = "CredentialFileSourceConfig::default_poll_interval",
+        deserialize_with = "deserialize_duration",
+        serialize_with = "as_std_duration"
+    )]
+    pub poll_interval: std::time::Duration,
+}
+
+impl CredentialFileSourceConfig {
+    /// Returns the polling interval used when `poll_interval` is omitted.
+    pub const fn default_poll_interval() -> std::time::Duration {
+        std::time::Duration::from_secs(60)
+    }
 }
 
 /// Tag selecting the certificate backend. The matching settings (if any) live
@@ -4305,6 +4350,49 @@ mod tests {
         assert!(error.to_string().contains("unknown field `audience`"));
     }
 
+    #[test]
+    fn credentials_file_config_contract() {
+        scenarios!(
+            run = |config: &str| toml::from_str::<CredentialsConfig>(config).map_err(drop);
+            "optional source" {
+                "" => Yields(CredentialsConfig::default()),
+            }
+
+            "valid file source" {
+                r#"
+[file]
+path = "/var/run/secrets/nico/ufm/credentials.yaml"
+poll_interval = "17s"
+"# => Yields(CredentialsConfig {
+                    file: Some(CredentialFileSourceConfig {
+                        path: PathBuf::from("/var/run/secrets/nico/ufm/credentials.yaml"),
+                        poll_interval: std::time::Duration::from_secs(17),
+                    }),
+                }),
+            }
+
+            "file source default poll interval" {
+                r#"
+[file]
+path = "credentials.yaml"
+"# => Yields(CredentialsConfig {
+                    file: Some(CredentialFileSourceConfig {
+                        path: PathBuf::from("credentials.yaml"),
+                        poll_interval: std::time::Duration::from_secs(60),
+                    }),
+                }),
+            }
+
+            "missing file path" {
+                "[file]\npoll_interval = \"17s\"" => Fails,
+            }
+
+            "unknown field" {
+                "[file]\npath = \"credentials.yaml\"\ntoken = \"not-a-secret-here\"" => Fails,
+            }
+        );
+    }
+
     /// A cap below the clients' fixed 300 s lifetime is accepted-looking and
     /// fatal: every token the fleet mints exceeds it, so all of them are
     /// rejected. Startup has to refuse rather than let the fleet discover it.
@@ -5396,6 +5484,7 @@ mod tests {
         assert!(config.pools.is_none());
         assert!(config.ib_config.is_none());
         assert!(config.ib_fabrics.is_empty());
+        assert_eq!(config.credentials, CredentialsConfig::default());
         assert_eq!(
             config.bmc_session_lockout_threshold,
             default_bmc_session_lockout_threshold()
@@ -5651,6 +5740,15 @@ mod tests {
             assert_eq!(config.metrics_endpoint, Some("[::]:1080".parse().unwrap()));
             assert_eq!(config.database_url, "postgres://othersql".to_string());
             assert_eq!(config.asn, 777);
+            assert_eq!(
+                config.credentials,
+                CredentialsConfig {
+                    file: Some(CredentialFileSourceConfig {
+                        path: PathBuf::from("/var/run/secrets/nico/ufm/credentials.yaml"),
+                        poll_interval: std::time::Duration::from_secs(17),
+                    }),
+                }
+            );
             assert_eq!(
                 config.dhcp_servers,
                 vec![Ipv4Addr::new(1, 2, 3, 4), Ipv4Addr::new(5, 6, 7, 8)]

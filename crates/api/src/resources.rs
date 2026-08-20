@@ -88,10 +88,11 @@ pub(crate) async fn setup_resources(
     )
     .await?;
 
-    // Build the local-override readers (env, file); each is consulted only when
-    // its [credentials.*] section is enabled. The backends (postgres,
-    // vault) and the writer are chosen below.
-    let local_overrides = local_credential_readers(credential_config).await?;
+    // Build the local-override readers. The config-file credential source, if
+    // set, overrides the legacy environment-selected file source; env remains
+    // opt-in through its legacy environment configuration. The backends
+    // (postgres, vault) and the writer are chosen below.
+    let local_overrides = local_credential_readers(carbide_config, credential_config).await?;
 
     // With a [secrets] section, the credential chain and write target come from
     // `backends`/`writer` -- defaulting to env -> file -> vault writing to vault,
@@ -304,19 +305,20 @@ fn validate_database_pool_durations(
 }
 
 async fn local_credential_readers(
-    config: &CredentialConfig,
+    carbide_config: &CarbideConfig,
+    credential_config: &CredentialConfig,
 ) -> eyre::Result<Vec<Box<dyn CredentialReader>>> {
-    let env_reader: Option<Box<dyn CredentialReader>> = if config.env.enabled() {
+    let env_reader: Option<Box<dyn CredentialReader>> = if credential_config.env.enabled() {
         Some(Box::new(
-            carbide_secrets::local_credentials::EnvCredentials::new(config.env.clone())?,
+            carbide_secrets::local_credentials::EnvCredentials::new(credential_config.env.clone())?,
         ))
     } else {
         None
     };
-    let file_reader: Option<Box<dyn CredentialReader>> = if config.file.enabled() {
+    let file_config = file_credentials_config(carbide_config, credential_config);
+    let file_reader: Option<Box<dyn CredentialReader>> = if file_config.enabled() {
         Some(Box::new(
-            carbide_secrets::local_credentials::FileCredentialsWatcher::new(config.file.clone())
-                .await?,
+            carbide_secrets::local_credentials::FileCredentialsWatcher::new(file_config).await?,
         ))
     } else {
         None
@@ -324,6 +326,22 @@ async fn local_credential_readers(
     // The local overrides that ended up enabled, in order -- always tried
     // ahead of the backends.
     Ok([env_reader, file_reader].into_iter().flatten().collect())
+}
+
+fn file_credentials_config(
+    carbide_config: &CarbideConfig,
+    credential_config: &CredentialConfig,
+) -> carbide_secrets::FileCredentialsConfig {
+    carbide_config
+        .credentials
+        .file
+        .as_ref()
+        .map(|file| carbide_secrets::FileCredentialsConfig {
+            enabled: Some(true),
+            path: Some(file.path.clone()),
+            poll_interval: Some(file.poll_interval),
+        })
+        .unwrap_or_else(|| credential_config.file.clone())
 }
 
 /// Build the KMS stack from the `[secrets.kms]` config: construct every
@@ -575,6 +593,36 @@ async fn is_import_complete(db_pool: &PgPool) -> eyre::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_credentials_file_overrides_legacy_file_source() {
+        let mut carbide_config = carbide_api_core::test_support::default_config::get();
+        carbide_config.credentials.file =
+            Some(carbide_api_core::cfg::file::CredentialFileSourceConfig {
+                path: "/var/run/secrets/nico/ufm/credentials.yaml".into(),
+                poll_interval: std::time::Duration::from_secs(17),
+            });
+        let credential_config = CredentialConfig {
+            file: carbide_secrets::FileCredentialsConfig {
+                enabled: Some(true),
+                path: Some("legacy-credentials.yaml".into()),
+                poll_interval: Some(std::time::Duration::from_secs(23)),
+            },
+            ..Default::default()
+        };
+
+        let file_config = file_credentials_config(&carbide_config, &credential_config);
+
+        assert!(file_config.enabled());
+        assert_eq!(
+            file_config.path(),
+            std::path::PathBuf::from("/var/run/secrets/nico/ufm/credentials.yaml")
+        );
+        assert_eq!(
+            file_config.poll_interval(),
+            std::time::Duration::from_secs(17)
+        );
+    }
 
     /// The pool builder rejects zero-valued lifecycle settings before it
     /// touches the database, naming the offending field.

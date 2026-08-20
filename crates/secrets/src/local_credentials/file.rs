@@ -340,6 +340,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reloads_ufm_credentials_after_atomic_file_replacement() {
+        let dir = tempdir().expect("create temp dir");
+        let file_path = dir.path().join("credentials.yaml");
+        tokio::fs::write(
+            &file_path,
+            r#"ufm_auth_by_fabric:
+  default:
+    username: ignored-by-ufm
+    password: token-before-rotation
+"#,
+        )
+        .await
+        .expect("write initial credentials file");
+
+        let provider = FileCredentialsWatcher::new(FileCredentialsConfig {
+            path: Some(file_path.clone()),
+            poll_interval: Some(Duration::from_millis(50)),
+            ..Default::default()
+        })
+        .await
+        .expect("create file provider");
+        let key = CredentialKey::UfmAuth {
+            fabric: "default".to_string(),
+        };
+
+        let replacement_path = dir.path().join("credentials.next.yaml");
+        tokio::fs::write(
+            &replacement_path,
+            r#"ufm_auth_by_fabric:
+  default:
+    username: ignored-by-ufm
+    password: token-after-rotation
+"#,
+        )
+        .await
+        .expect("write replacement credentials file");
+        tokio::fs::rename(&replacement_path, &file_path)
+            .await
+            .expect("atomically replace credentials file");
+
+        let expected = Some(Credentials::UsernamePassword {
+            username: "ignored-by-ufm".to_string(),
+            password: "token-after-rotation".to_string(),
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if provider
+                    .get_credentials(&key)
+                    .await
+                    .expect("read reloaded UFM credentials")
+                    == expected
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("watcher must reload atomically replaced UFM credentials");
+    }
+
+    #[tokio::test]
     async fn missing_file_returns_error() {
         let dir = tempdir().expect("create temp dir");
         let file_path = dir.path().join("does-not-exist.yaml");

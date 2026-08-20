@@ -358,6 +358,7 @@ pub fn get() -> CarbideConfig {
         tracing: TracingConfig::default(),
         ntp_servers: vec![],
         secrets: None,
+        credentials: Default::default(),
         dhcp_lease_expiry_handling: false,
         certificates: Default::default(),
     }

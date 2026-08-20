@@ -115,6 +115,53 @@ kubectl create secret generic nico-vault-token \
   --from-literal=VAULT_TOKEN='<vault-token>'
 ```
 
+### `ufm-credentials` (optional)
+
+Static UFM bearer credentials for `nico-api`. This Secret is not created or
+templated by the chart; the chart mounts one key from the existing Secret as a
+read-only file. The secret key may have any name, but the mounted filename is
+always `credentials.yaml`.
+
+Create the source file outside source control. For an InfiniBand fabric named
+`default`, it has the following YAML shape:
+
+```yaml
+ufm_auth_by_fabric:
+  default:
+    username: ignored-by-ufm
+    password: "<UFM bearer token>"
+```
+
+`default` must match the fabric name under `[ib_fabrics.<name>]`. `username` is
+present for the shared credential-file schema and is ignored by UFM; `password`
+is the bearer token sent to UFM.
+
+```bash
+kubectl create secret generic ufm-credentials \
+  --namespace forge-system \
+  --from-file=credentials.yaml=./ufm-credentials.yaml
+```
+
+Enable the mount with these Helm values:
+
+```yaml
+nico-api:
+  credentials:
+    file:
+      existingSecret:
+        name: ufm-credentials
+        key: credentials.yaml
+      mountPath: /var/run/secrets/nico/ufm
+      pollInterval: "60s"
+```
+
+The chart writes only the path and polling interval to its ConfigMap, then
+mounts the selected Secret key at
+`/var/run/secrets/nico/ufm/credentials.yaml`. Updating that key replaces the
+projected file; NICo reloads a valid replacement without a Helm upgrade or pod
+restart, bounded by `pollInterval`. A malformed replacement leaves the last
+valid credential active.
+
 ### `ssh-host-key` (for nico-ssh-console-rs)
 
 SSH host key used by the console proxy service. This key must be generated ahead of time.
