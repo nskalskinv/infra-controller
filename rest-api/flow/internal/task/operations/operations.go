@@ -6,6 +6,7 @@ package operations
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ func ExtractRuleID(info json.RawMessage) *uuid.UUID {
 }
 
 type Operation interface {
+	Clone() Operation
 	Validate() error
 	Marshal() (json.RawMessage, error)
 	Unmarshal(data json.RawMessage) error
@@ -90,11 +92,24 @@ type PowerControlTaskInfo struct {
 }
 
 func (t *PowerControlTaskInfo) Validate() error {
+	if t == nil {
+		return fmt.Errorf("operation is required")
+	}
+
 	if t.Operation == PowerOperationUnknown {
 		return fmt.Errorf("invalid power control operation")
 	}
 
 	return nil
+}
+
+// Clone returns an independent copy of the operation.
+func (t *PowerControlTaskInfo) Clone() Operation {
+	if t == nil {
+		return nil
+	}
+	cloned := *t
+	return &cloned
 }
 
 func (t *PowerControlTaskInfo) Marshal() (json.RawMessage, error) {
@@ -129,7 +144,21 @@ type InjectExpectationTaskInfo struct {
 }
 
 func (t *InjectExpectationTaskInfo) Validate() error {
+	if t == nil {
+		return fmt.Errorf("operation is required")
+	}
+
 	return nil
+}
+
+// Clone returns an independent copy of the operation.
+func (t *InjectExpectationTaskInfo) Clone() Operation {
+	if t == nil {
+		return nil
+	}
+	cloned := *t
+	cloned.Info = slices.Clone(t.Info)
+	return &cloned
 }
 
 func (t *InjectExpectationTaskInfo) Marshal() (json.RawMessage, error) {
@@ -172,7 +201,20 @@ type BringUpTaskInfo struct {
 }
 
 func (t *BringUpTaskInfo) Validate() error {
+	if t == nil {
+		return fmt.Errorf("operation is required")
+	}
+
 	return nil
+}
+
+// Clone returns an independent copy of the operation.
+func (t *BringUpTaskInfo) Clone() Operation {
+	if t == nil {
+		return nil
+	}
+	cloned := *t
+	return &cloned
 }
 
 func (t *BringUpTaskInfo) Marshal() (json.RawMessage, error) {
@@ -249,11 +291,25 @@ type FirmwareControlTaskInfo struct {
 }
 
 func (t *FirmwareControlTaskInfo) Validate() error {
+	if t == nil {
+		return fmt.Errorf("operation is required")
+	}
+
 	if t.Operation == FirmwareOperationUnknown {
 		return fmt.Errorf("invalid firmware control operation")
 	}
 
 	return nil
+}
+
+// Clone returns an independent copy of the operation.
+func (t *FirmwareControlTaskInfo) Clone() Operation {
+	if t == nil {
+		return nil
+	}
+	cloned := *t
+	cloned.SubTargets = slices.Clone(t.SubTargets)
+	return &cloned
 }
 
 func (t *FirmwareControlTaskInfo) Marshal() (json.RawMessage, error) {
@@ -289,7 +345,20 @@ type DecommissionTaskInfo struct {
 }
 
 func (t *DecommissionTaskInfo) Validate() error {
+	if t == nil {
+		return fmt.Errorf("operation is required")
+	}
+
 	return nil
+}
+
+// Clone returns an independent copy of the operation.
+func (t *DecommissionTaskInfo) Clone() Operation {
+	if t == nil {
+		return nil
+	}
+	cloned := *t
+	return &cloned
 }
 
 func (t *DecommissionTaskInfo) Marshal() (json.RawMessage, error) {
