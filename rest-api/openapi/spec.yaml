@@ -10820,7 +10820,7 @@ paths:
                       components:
                         - id: 660e8400-e29b-41d4-a716-446655440001
                           componentId: fm100ht4v4mce2qstjnl8970nnj3ie6ecek4mtjn27pea4kre5gsa49jg0g
-                          type: ComponentTypeCompute
+                          type: Compute
                           name: Server-01
                           serialNumber: SN-SRV-001
                           manufacturer: Dell
@@ -10904,7 +10904,7 @@ paths:
                     components:
                       - id: 660e8400-e29b-41d4-a716-446655440001
                         componentId: fm100ht4v4mce2qstjnl8970nnj3ie6ecek4mtjn27pea4kre5gsa49jg0g
-                        type: ComponentTypeCompute
+                        type: Compute
                         name: Server-01
                         serialNumber: SN-SRV-001
                         manufacturer: Dell
@@ -10989,7 +10989,7 @@ paths:
                         expected:
                           id: 660e8400-e29b-41d4-a716-446655440001
                           componentId: comp-1
-                          type: ComponentTypeCompute
+                          type: Compute
                           name: Server-01
                           serialNumber: SN-SRV-001
                           manufacturer: Dell
@@ -11079,7 +11079,7 @@ paths:
                         expected:
                           id: 660e8400-e29b-41d4-a716-446655440001
                           componentId: comp-1
-                          type: ComponentTypeCompute
+                          type: Compute
                           name: Server-01
                           serialNumber: SN-SRV-001
                           manufacturer: Dell
@@ -12756,9 +12756,9 @@ paths:
         - schema:
             type: string
             enum:
-              - compute
-              - switch
-              - powershelf
+              - Compute
+              - NVSwitch
+              - PowerShelf
           name: type
           in: query
           description: Filter by tray type
@@ -12824,7 +12824,7 @@ paths:
                   value:
                     - id: 660e8400-e29b-41d4-a716-446655440001
                       componentId: fm100ht4v4mce2qstjnl8970nnj3ie6ecek4mtjn27pea4kre5gsa49jg0g
-                      type: compute
+                      type: Compute
                       name: compute-tray-1
                       manufacturer: NVIDIA
                       model: GB200
@@ -12891,7 +12891,7 @@ paths:
                   value:
                     id: 660e8400-e29b-41d4-a716-446655440001
                     componentId: fm100ht4v4mce2qstjnl8970nnj3ie6ecek4mtjn27pea4kre5gsa49jg0g
-                    type: compute
+                    type: Compute
                     name: compute-tray-1
                     manufacturer: NVIDIA
                     model: GB200
@@ -12967,9 +12967,9 @@ paths:
         - schema:
             type: string
             enum:
-              - compute
-              - switch
-              - powershelf
+              - Compute
+              - NVSwitch
+              - PowerShelf
           name: type
           in: query
           required: false
@@ -22226,7 +22226,7 @@ components:
           components:
             - id: 660e8400-e29b-41d4-a716-446655440001
               componentId: fm100ht4v4mce2qstjnl8970nnj3ie6ecek4mtjn27pea4kre5gsa49jg0g
-              type: ComponentTypeCompute
+              type: Compute
               name: Server-01
               serialNumber: SN-SRV-001
               manufacturer: Dell
@@ -22377,7 +22377,7 @@ components:
           description: ID of the rack this component belongs to
         type:
           type: string
-          description: Type of the component (e.g. ComponentTypeCompute, ComponentTypeNVSwitch)
+          description: Type of the component (e.g. Compute, NVSwitch, PowerShelf)
         name:
           type: string
           description: Name of the component
@@ -22454,7 +22454,7 @@ components:
       examples:
         - id: 660e8400-e29b-41d4-a716-446655440001
           componentId: fm100ht4v4mce2qstjnl8970nnj3ie6ecek4mtjn27pea4kre5gsa49jg0g
-          type: compute
+          type: Compute
           name: compute-tray-1
           manufacturer: NVIDIA
           model: GB200
@@ -22482,9 +22482,9 @@ components:
         type:
           type: string
           enum:
-            - compute
-            - switch
-            - powershelf
+            - Compute
+            - NVSwitch
+            - PowerShelf
           description: Type of the tray
         name:
           type: string
@@ -22581,9 +22581,9 @@ components:
         type:
           type: string
           enum:
-            - compute
-            - switch
-            - powershelf
+            - Compute
+            - NVSwitch
+            - PowerShelf
           description: Filter by tray type
         componentIds:
           type: array
@@ -23894,7 +23894,7 @@ components:
       examples:
         - siteId: 550e8400-e29b-41d4-a716-446655440000
           filter:
-            type: switch
+            type: NVSwitch
           version: '24.11.0'
           targets: [bmc, nvos]
     UpdatePowerStateRequest:
