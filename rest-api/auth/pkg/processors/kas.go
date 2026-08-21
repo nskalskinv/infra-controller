@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -272,7 +273,7 @@ func digest(raw string) [32]byte {
 }
 
 func hashDigest(dg [32]byte) uint32 {
-	return uint32(dg[0]) | uint32(dg[1])<<8 | uint32(dg[2])<<16 | uint32(dg[3])<<24
+	return binary.LittleEndian.Uint32(dg[:4])
 }
 
 func (ca *apiKeyCache) allowed(dg [32]byte) (uuid.UUID, bool) {
