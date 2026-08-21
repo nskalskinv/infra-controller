@@ -341,6 +341,7 @@ pub(super) async fn update_nvue(
     update_flavor: NvueUpdateFlavor<'_>,
     nc: &rpc::ManagedHostNetworkConfigResponse,
     hbn_device_names: HBNDeviceNames,
+    supplemental_config: Option<&str>,
 ) -> eyre::Result<bool> {
     let hbn_version = match update_flavor {
         NvueUpdateFlavor::StartupFile { .. } => hbn::read_version().await?,
@@ -654,6 +655,19 @@ pub(super) async fn update_nvue(
 
     // next_contents is a YAML-serialized NVUE config.
     let next_contents = nvue::build(conf)?;
+
+    // Merging before the write/push keeps the supplemental content part of the
+    // same atomic NVUE revision on both apply flavors. A blank file (empty or
+    // whitespace-only, hence the trim: a pre-created ConfigMap or a stray
+    // trailing newline) means "no patch" rather than failing reconciliation;
+    // a malformed one fails loudly instead of being silently dropped.
+    let next_contents = match supplemental_config.map(str::trim) {
+        Some(patch) if !patch.is_empty() => {
+            crate::supplemental_config::merge_into_nvue_yaml(&next_contents, patch)
+                .wrap_err("merging supplemental network config")?
+        }
+        _ => next_contents,
+    };
 
     match update_flavor {
         NvueUpdateFlavor::StartupFile {
@@ -1999,6 +2013,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
@@ -2049,6 +2064,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
@@ -2099,6 +2115,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
@@ -2158,6 +2175,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
@@ -2197,6 +2215,7 @@ mod tests {
                 update_flavor,
                 &network_config,
                 HBNDeviceNames::hbn_23(),
+                None,
             )
             .await
             .unwrap_err()
@@ -2236,6 +2255,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
@@ -2290,6 +2310,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
@@ -2347,6 +2368,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
@@ -2413,6 +2435,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
@@ -2469,6 +2492,7 @@ mod tests {
             update_flavor,
             &network_config,
             HBNDeviceNames::hbn_23(),
+            None,
         )
         .await?;
         assert!(
