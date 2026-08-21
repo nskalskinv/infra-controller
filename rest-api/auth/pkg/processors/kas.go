@@ -11,12 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
 
+	authz "github.com/NVIDIA/infra-controller/rest-api/auth/pkg/authorization"
 	"github.com/NVIDIA/infra-controller/rest-api/auth/pkg/config"
 	"github.com/NVIDIA/infra-controller/rest-api/common/pkg/roles"
 	cutil "github.com/NVIDIA/infra-controller/rest-api/common/pkg/util"
@@ -136,11 +138,9 @@ func (si *sakInfo) toOrgData() cdbm.OrgData {
 	return orgData
 }
 
-// callerInfo is the subset of get-caller-info this path needs. For a personal key the
-// embedded user record is complete, so no further NGC call is required.
+// callerInfo is the subset of get-caller-info this path needs.
 type callerInfo struct {
-	KeyType string                `json:"type"`
-	User    *userActivity.NgcUser `json:"user"`
+	KeyType string `json:"type"`
 }
 
 // postCredential sends the credential in a form body, which is how both /v3/keys
@@ -413,10 +413,11 @@ func (r *resolver) fetchIdentity(ctx context.Context, format keyFormat, raw stri
 
 	switch caller.KeyType {
 	case keyTypePersonal:
-		if caller.User == nil {
-			return nil, fmt.Errorf("%w: get-caller-info returned no user for a personal key", errNgcUpstream)
+		ngcUser, err := r.ngc.getNgcUser(ctx, raw)
+		if err != nil {
+			return nil, err
 		}
-		return identityFromNgcUser(caller.User)
+		return identityFromNgcUser(ngcUser)
 	case keyTypeService:
 		return r.serviceIdentity(ctx, raw)
 	default:
@@ -443,6 +444,19 @@ func (r *resolver) serviceIdentity(ctx context.Context, raw string) (*identity, 
 	}, nil
 }
 
+func orgsGrantingAccess(orgData cdbm.OrgData) cdbm.OrgData {
+	nicoRoles := slices.Collect(maps.Keys(config.AllowedRoles))
+
+	granting := cdbm.OrgData{}
+	for name, org := range orgData {
+		if authz.ValidateUserRolesInOrg(org, nil, nicoRoles...) {
+			granting[name] = org
+		}
+	}
+
+	return granting
+}
+
 func identityFromNgcUser(ngcUser *userActivity.NgcUser) (*identity, error) {
 	if ngcUser.StarfleetID == "" {
 		return nil, fmt.Errorf("%w: NGC returned a user with no starfleetId", errNgcUpstream)
@@ -455,7 +469,7 @@ func identityFromNgcUser(ngcUser *userActivity.NgcUser) (*identity, error) {
 		email:       ngcUser.Email,
 		firstName:   firstName,
 		lastName:    lastName,
-		orgData:     userActivity.GetOrgData(ngcUser),
+		orgData:     orgsGrantingAccess(userActivity.GetOrgData(ngcUser)),
 	}, nil
 }
 
