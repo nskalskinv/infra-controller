@@ -38,7 +38,7 @@ type KASProcessor struct {
 	encCfg    *commonConfig.PayloadEncryptionConfig
 }
 
-// HandleToken processes KAS JWT tokens
+// ProcessToken processes KAS JWT tokens
 func (h *KASProcessor) ProcessToken(c echo.Context, tokenStr string, jwksCfg *config.JwksConfig, logger zerolog.Logger) (*cdbm.User, *cutil.APIError) {
 	claims := &claim.NgcKasClaims{}
 
