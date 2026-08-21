@@ -336,13 +336,12 @@ func newResolver(dbSession *cdb.Session) *resolver {
 }
 
 func (r *resolver) resolve(ctx context.Context, raw string) (*cdbm.User, error) {
-	dg := digest(raw)
-
 	format, err := detectAPIKeyType(raw)
 	if err != nil {
-		r.cache.block(dg)
 		return nil, errKeyRejected
 	}
+
+	dg := digest(raw)
 
 	if r.cache.blocked(dg) {
 		return nil, errKeyRejected
