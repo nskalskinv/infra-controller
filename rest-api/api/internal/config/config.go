@@ -196,12 +196,12 @@ var config *Config
 // Config represents configurations for the service
 type Config struct {
 	sync.RWMutex
-	v               *viper.Viper
-	db              *cconfig.DBConfig
-	temporal        *cconfig.TemporalConfig
-	JwtOriginConfig *cauth.JWTOriginConfig
-	SiteConfig      *SiteConfig
-	KeycloakConfig  *cauth.KeycloakConfig
+	v                 *viper.Viper
+	db                *cconfig.DBConfig
+	temporal          *cconfig.TemporalConfig
+	TokenOriginConfig *cauth.TokenOriginConfig
+	SiteConfig        *SiteConfig
+	KeycloakConfig    *cauth.KeycloakConfig
 }
 
 // NewConfig creates a new config object
@@ -419,10 +419,10 @@ func (c *Config) GetTemporalConfig() (*cconfig.TemporalConfig, error) {
 	return c.temporal, err
 }
 
-// GetOrInitJWTOrigin returns the JWT origin config with all configured auth providers
-func (c *Config) GetOrInitJWTOriginConfig() *cauth.JWTOriginConfig {
-	if c.JwtOriginConfig == nil {
-		c.JwtOriginConfig = cauth.NewJWTOriginConfig()
+// GetOrInitTokenOriginConfig returns the token origin config with all configured auth providers
+func (c *Config) GetOrInitTokenOriginConfig() *cauth.TokenOriginConfig {
+	if c.TokenOriginConfig == nil {
+		c.TokenOriginConfig = cauth.NewTokenOriginConfig()
 
 		// Issuers were already validated when the config was loaded
 		issuersConfig := c.GetIssuersConfig()
@@ -482,7 +482,7 @@ func (c *Config) GetOrInitJWTOriginConfig() *cauth.JWTOriginConfig {
 				jwksCfg.ReservedOrgNames = reservedOrgNames
 			}
 
-			c.JwtOriginConfig.AddJwksConfig(jwksCfg)
+			c.TokenOriginConfig.AddJwksConfig(jwksCfg)
 		}
 
 		// Add Keycloak configuration if enabled
@@ -495,13 +495,13 @@ func (c *Config) GetOrInitJWTOriginConfig() *cauth.JWTOriginConfig {
 				if err != nil {
 					log.Warn().Err(err).Msg("Failed to get Keycloak JWKS config, skipping Keycloak JWT origin")
 				} else {
-					c.JwtOriginConfig.AddJwksConfig(jwksConfig)
+					c.TokenOriginConfig.AddJwksConfig(jwksConfig)
 				}
 			}
 		}
 
 		// Initialize JWKS data
-		if err := c.JwtOriginConfig.UpdateAllJWKS(); err != nil {
+		if err := c.TokenOriginConfig.UpdateAllJWKS(); err != nil {
 			log.Warn().Err(err).Msg("Failed to update JWKS data")
 			return nil
 		} else {
@@ -509,7 +509,7 @@ func (c *Config) GetOrInitJWTOriginConfig() *cauth.JWTOriginConfig {
 		}
 	}
 
-	return c.JwtOriginConfig
+	return c.TokenOriginConfig
 }
 
 // GetSiteConfig returns the Site config

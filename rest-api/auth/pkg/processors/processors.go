@@ -41,29 +41,29 @@ func NewCustomProcessor(dbSession *cdb.Session) config.TokenProcessor {
 	}
 }
 
-// InitializeProcessors sets up all token processors in the JWTOriginConfig
-func InitializeProcessors(joCfg *config.JWTOriginConfig, dbSession *cdb.Session, tc temporalClient.Client, encCfg *commonConfig.PayloadEncryptionConfig, kcfg *config.KeycloakConfig) {
+// InitializeProcessors sets up all token processors in the TokenOriginConfig
+func InitializeProcessors(toCfg *config.TokenOriginConfig, dbSession *cdb.Session, tc temporalClient.Client, encCfg *commonConfig.PayloadEncryptionConfig, kcfg *config.KeycloakConfig) {
 	for _, origin := range []string{config.TokenOriginKeycloak, config.TokenOriginKasSsa, config.TokenOriginKasLegacy, config.TokenOriginCustom} {
 		switch origin {
 		case config.TokenOriginKeycloak:
 			processor := NewKeycloakProcessor(dbSession, kcfg)
-			joCfg.SetProcessorForOrigin(origin, processor)
+			toCfg.SetProcessorForOrigin(origin, processor)
 		case config.TokenOriginKasSsa:
 			processor := NewSSAProcessor(dbSession)
-			joCfg.SetProcessorForOrigin(origin, processor)
+			toCfg.SetProcessorForOrigin(origin, processor)
 		case config.TokenOriginKasLegacy:
 			processor := NewKASProcessor(dbSession, tc, encCfg)
-			joCfg.SetProcessorForOrigin(origin, processor)
+			toCfg.SetProcessorForOrigin(origin, processor)
 		case config.TokenOriginCustom:
 			processor := NewCustomProcessor(dbSession)
-			joCfg.SetProcessorForOrigin(origin, processor)
+			toCfg.SetProcessorForOrigin(origin, processor)
 		}
 	}
 
 	// The API key caches and NGC client are only allocated when a kas origin issuer
 	// is configured, so an unused kas processor costs nothing
-	if joCfg.GetFirstConfigByOrigin(config.TokenOriginKas) != nil {
+	if toCfg.GetFirstConfigByOrigin(config.TokenOriginKas) != nil {
 		processor := NewKasOriginProcessor(dbSession)
-		joCfg.SetProcessorForOrigin(config.TokenOriginKas, processor)
+		toCfg.SetProcessorForOrigin(config.TokenOriginKas, processor)
 	}
 }

@@ -23,13 +23,13 @@ import (
 )
 
 // Auth middleware reviews request parameters and validates authentication
-func Auth(dbSession *cdb.Session, tc temporalClient.Client, joCfg *config.JWTOriginConfig, encCfg *commonConfig.PayloadEncryptionConfig, kcfg *config.KeycloakConfig) echo.MiddlewareFunc {
+func Auth(dbSession *cdb.Session, tc temporalClient.Client, toCfg *config.TokenOriginConfig, encCfg *commonConfig.PayloadEncryptionConfig, kcfg *config.KeycloakConfig) echo.MiddlewareFunc {
 	// Initialize processors once during middleware creation
-	processors.InitializeProcessors(joCfg, dbSession, tc, encCfg, kcfg)
+	processors.InitializeProcessors(toCfg, dbSession, tc, encCfg, kcfg)
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			apiErr := AuthProcessor(c, joCfg)
+			apiErr := AuthProcessor(c, toCfg)
 			if apiErr != nil {
 				return util.NewAPIErrorResponse(c, apiErr.Code, apiErr.Message, apiErr.Data)
 			}
@@ -40,7 +40,7 @@ func Auth(dbSession *cdb.Session, tc temporalClient.Client, joCfg *config.JWTOri
 }
 
 // AuthProcessor validates auth header forwarded by NGC KAS and gets or creates/updates user record
-func AuthProcessor(c echo.Context, joCfg *config.JWTOriginConfig) *util.APIError {
+func AuthProcessor(c echo.Context, toCfg *config.TokenOriginConfig) *util.APIError {
 	logger := log.With().Str("Middleware", "Auth").Logger()
 
 	orgName := c.Param("orgName")
@@ -76,8 +76,8 @@ func AuthProcessor(c echo.Context, joCfg *config.JWTOriginConfig) *util.APIError
 	if uErr != nil {
 		// A bearer that is not a JWT is an NGC API key when a kas origin issuer is
 		// configured.
-		if processor := joCfg.GetProcessorByOrigin(config.TokenOriginKas); processor != nil {
-			_, apiErr := processor.ProcessToken(c, tokenStr, joCfg.GetFirstConfigByOrigin(config.TokenOriginKas), logger)
+		if processor := toCfg.GetProcessorByOrigin(config.TokenOriginKas); processor != nil {
+			_, apiErr := processor.ProcessToken(c, tokenStr, toCfg.GetFirstConfigByOrigin(config.TokenOriginKas), logger)
 			return apiErr
 		}
 
@@ -99,14 +99,14 @@ func AuthProcessor(c echo.Context, joCfg *config.JWTOriginConfig) *util.APIError
 	}
 
 	// Get the appropriate processor for this issuer
-	processor := joCfg.GetProcessorByIssuer(issuer)
+	processor := toCfg.GetProcessorByIssuer(issuer)
 	if processor == nil {
 		logger.Error().Str("issuer", issuer).Msg("No processor found for token issuer")
 		return util.NewAPIError(http.StatusUnauthorized, "Invalid authorization token in request", nil)
 	}
 
 	// Use the processor to process the token
-	_, apiErr := processor.ProcessToken(c, tokenStr, joCfg.GetConfig(issuer), logger)
+	_, apiErr := processor.ProcessToken(c, tokenStr, toCfg.GetConfig(issuer), logger)
 	if apiErr != nil {
 		return apiErr
 	}
