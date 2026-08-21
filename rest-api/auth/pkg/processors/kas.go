@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -316,10 +317,12 @@ type resolver struct {
 	flight    singleflight.Group
 }
 
-func newResolver(dbSession *cdb.Session) (*resolver, error) {
+func newResolver(dbSession *cdb.Session) *resolver {
 	cache, err := newAPIKeyCache()
 	if err != nil {
-		return nil, err
+		// The cache capacities and the hash function are compile-time constants, so
+		// allocation cannot fail on any reachable input
+		log.Panic().Err(err).Msg("failed to allocate the kas origin API key caches")
 	}
 
 	return &resolver{
@@ -329,7 +332,7 @@ func newResolver(dbSession *cdb.Session) (*resolver, error) {
 			baseURL: ngcBaseURL,
 		},
 		cache: cache,
-	}, nil
+	}
 }
 
 func (r *resolver) resolve(ctx context.Context, raw string) (*cdbm.User, error) {
@@ -500,13 +503,8 @@ type KasOriginProcessor struct {
 }
 
 // NewKasOriginProcessor creates a new NGC API key processor
-func NewKasOriginProcessor(dbSession *cdb.Session) (config.TokenProcessor, error) {
-	res, err := newResolver(dbSession)
-	if err != nil {
-		return nil, err
-	}
-
-	return &KasOriginProcessor{resolver: res}, nil
+func NewKasOriginProcessor(dbSession *cdb.Session) config.TokenProcessor {
+	return &KasOriginProcessor{resolver: newResolver(dbSession)}
 }
 
 // ProcessToken resolves an NGC API key to a user record, refreshing it from NGC when stale

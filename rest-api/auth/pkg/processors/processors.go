@@ -7,7 +7,6 @@ import (
 	"github.com/NVIDIA/infra-controller/rest-api/auth/pkg/config"
 	commonConfig "github.com/NVIDIA/infra-controller/rest-api/common/pkg/config"
 	cdb "github.com/NVIDIA/infra-controller/rest-api/db/pkg/db"
-	"github.com/rs/zerolog/log"
 	temporalClient "go.temporal.io/sdk/client"
 )
 
@@ -64,11 +63,7 @@ func InitializeProcessors(joCfg *config.JWTOriginConfig, dbSession *cdb.Session,
 	// The API key caches and NGC client are only allocated when a kas origin issuer
 	// is configured, so an unused kas processor costs nothing
 	if joCfg.GetFirstConfigByOrigin(config.TokenOriginKas) != nil {
-		processor, err := NewKasOriginProcessor(dbSession)
-		if err != nil {
-			log.Error().Err(err).Msg("failed to initialize kas origin API key processor")
-		} else {
-			joCfg.SetProcessorForOrigin(config.TokenOriginKas, processor)
-		}
+		processor := NewKasOriginProcessor(dbSession)
+		joCfg.SetProcessorForOrigin(config.TokenOriginKas, processor)
 	}
 }
