@@ -401,8 +401,10 @@ func (admif *APIDpuMachineInterface) FromProto(protoInterface *corev1.MachineInt
 		admif.LastDhcp = &lastDhcp
 	}
 
-	if protoInterface.IsBmc != nil {
-		admif.IsBmc = *protoInterface.IsBmc
+	if protoInterface.InterfaceType != nil {
+		admif.IsBmc = protoInterface.GetInterfaceType() == corev1.InterfaceType_INTERFACE_TYPE_BMC
+	} else {
+		admif.IsBmc = protoInterface.GetIsBmc() //nolint:staticcheck // Preserve compatibility with Core responses that predate interface_type.
 	}
 }
 

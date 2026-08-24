@@ -178,6 +178,49 @@ func TestAPIDpuMachine_FromProto_NilMachine(t *testing.T) {
 	})
 }
 
+func TestAPIDpuMachineInterface_FromProto_InterfaceType(t *testing.T) {
+	tests := []struct {
+		name          string
+		interfaceType *corev1.InterfaceType
+		legacyIsBmc   *bool
+		want          bool
+	}{
+		{
+			name:          "uses BMC interface type",
+			interfaceType: cutil.GetPtr(corev1.InterfaceType_INTERFACE_TYPE_BMC),
+			legacyIsBmc:   cutil.GetPtr(false),
+			want:          true,
+		},
+		{
+			name:          "uses data interface type",
+			interfaceType: cutil.GetPtr(corev1.InterfaceType_INTERFACE_TYPE_DATA),
+			legacyIsBmc:   cutil.GetPtr(true),
+			want:          false,
+		},
+		{
+			name:        "falls back to legacy BMC field",
+			legacyIsBmc: cutil.GetPtr(true),
+			want:        true,
+		},
+		{
+			name: "defaults to data interface",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			protoInterface := &corev1.MachineInterface{
+				InterfaceType: tt.interfaceType,
+				IsBmc:         tt.legacyIsBmc, //nolint:staticcheck // Exercise compatibility with Core responses that predate interface_type.
+			}
+			apiInterface := APIDpuMachineInterface{}
+			apiInterface.FromProto(protoInterface)
+			assert.Equal(t, tt.want, apiInterface.IsBmc)
+		})
+	}
+}
+
 func TestNewAPIDpuMachines(t *testing.T) {
 	ctx := APIDpuMachineProtoContext{
 		HostMachineID:            "test-host-machine-id",
