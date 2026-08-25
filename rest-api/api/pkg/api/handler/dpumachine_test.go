@@ -134,6 +134,8 @@ func TestGetDpuMachineHandler_Handle(t *testing.T) {
 		name               string
 		roles              []string
 		target             func(*getDpuMachineHandlerFixture) string
+		expectSearch       bool
+		searchMachineIDs   []string
 		machine            *corev1.Machine
 		networkConfig      *corev1.ManagedHostNetworkConfigResponse
 		wantStatus         int
@@ -155,8 +157,10 @@ func TestGetDpuMachineHandler_Handle(t *testing.T) {
 					AssociatedHostMachineId: &corev1.MachineId{Id: "host-1"},
 				},
 			},
+			expectSearch:       true,
+			searchMachineIDs:   []string{"dpu-1"},
 			wantStatus:         http.StatusOK,
-			wantProxiedMethods: []string{corev1.Forge_FindMachinesByIds_FullMethodName},
+			wantProxiedMethods: []string{corev1.Forge_FindMachineIds_FullMethodName, corev1.Forge_FindMachinesByIds_FullMethodName},
 		},
 		{
 			name:  "includes network configuration when requested",
@@ -172,10 +176,13 @@ func TestGetDpuMachineHandler_Handle(t *testing.T) {
 					AssociatedHostMachineId: &corev1.MachineId{Id: "host-1"},
 				},
 			},
+			expectSearch:      true,
+			searchMachineIDs:  []string{"dpu-1"},
 			networkConfig:     &corev1.ManagedHostNetworkConfigResponse{Asn: 65001},
 			wantStatus:        http.StatusOK,
 			wantNetworkConfig: true,
 			wantProxiedMethods: []string{
+				corev1.Forge_FindMachineIds_FullMethodName,
 				corev1.Forge_FindMachinesByIds_FullMethodName,
 				corev1.Forge_GetManagedHostNetworkConfig_FullMethodName,
 			},
@@ -190,8 +197,22 @@ func TestGetDpuMachineHandler_Handle(t *testing.T) {
 				Id:          &corev1.MachineId{Id: "dpu-1"},
 				MachineType: corev1.MachineType_HOST,
 			},
+			expectSearch:       true,
+			searchMachineIDs:   []string{"dpu-1"},
 			wantStatus:         http.StatusNotFound,
-			wantProxiedMethods: []string{corev1.Forge_FindMachinesByIds_FullMethodName},
+			wantProxiedMethods: []string{corev1.Forge_FindMachineIds_FullMethodName, corev1.Forge_FindMachinesByIds_FullMethodName},
+			wantErrorMessage:   "Could not find DPU Machine with specified ID",
+		},
+		{
+			name:  "returns not found without forwarding an absent ID",
+			roles: []string{authz.ProviderAdminRole},
+			target: func(f *getDpuMachineHandlerFixture) string {
+				return "/?siteId=" + f.siteID
+			},
+			expectSearch:       true,
+			searchMachineIDs:   []string{"dpu-2"},
+			wantStatus:         http.StatusNotFound,
+			wantProxiedMethods: []string{corev1.Forge_FindMachineIds_FullMethodName},
 			wantErrorMessage:   "Could not find DPU Machine with specified ID",
 		},
 		{
@@ -223,6 +244,13 @@ func TestGetDpuMachineHandler_Handle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fixture := newGetDpuMachineHandlerFixture(t, tt.roles)
+			if tt.expectSearch {
+				machineIDs := make([]*corev1.MachineId, 0, len(tt.searchMachineIDs))
+				for _, machineID := range tt.searchMachineIDs {
+					machineIDs = append(machineIDs, &corev1.MachineId{Id: machineID})
+				}
+				fixture.expectProxyResponse(t, &corev1.MachineIdList{MachineIds: machineIDs})
+			}
 			if tt.machine != nil {
 				fixture.expectProxyResponse(t, &corev1.MachineList{Machines: []*corev1.Machine{tt.machine}})
 			}
@@ -236,9 +264,15 @@ func TestGetDpuMachineHandler_Handle(t *testing.T) {
 			for i, wantMethod := range tt.wantProxiedMethods {
 				assert.Equal(t, wantMethod, fixture.proxiedReqs[i].FullMethod)
 			}
+			if tt.expectSearch {
+				var searchRequest corev1.MachineSearchConfig
+				require.NoError(t, protojson.Unmarshal(fixture.proxiedReqs[0].RequestJSON, &searchRequest))
+				assert.True(t, searchRequest.GetIncludeDpus())
+				assert.True(t, searchRequest.GetExcludeHosts())
+			}
 			if tt.wantNetworkConfig {
 				var networkConfigRequest corev1.ManagedHostNetworkConfigRequest
-				require.NoError(t, protojson.Unmarshal(fixture.proxiedReqs[1].RequestJSON, &networkConfigRequest))
+				require.NoError(t, protojson.Unmarshal(fixture.proxiedReqs[2].RequestJSON, &networkConfigRequest))
 				assert.Equal(t, "dpu-1", networkConfigRequest.GetDpuMachineId().GetId())
 			}
 

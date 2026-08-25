@@ -6,6 +6,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"sort"
 
 	"github.com/labstack/echo/v4"
@@ -257,6 +258,25 @@ func (gdmh GetDpuMachineHandler) Handle(c echo.Context) error {
 	if err != nil {
 		logger.Error().Err(err).Msg("failed to retrieve authorized Site")
 		return cutil.NewAPIErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve Site due to DB error", nil)
+	}
+
+	var idList corev1.MachineIdList
+	apiErr = common.ExecuteCoreGRPC(
+		ctx,
+		stc,
+		corev1.Forge_FindMachineIds_FullMethodName,
+		&corev1.MachineSearchConfig{IncludeDpus: true, ExcludeHosts: true},
+		&idList,
+		siteID,
+	)
+	if apiErr != nil {
+		logAPIError(logger, apiErr, "failed to retrieve DPU Machine IDs from Site")
+		return cutil.NewAPIErrorResponse(c, apiErr.Code, apiErr.Message, nil)
+	}
+	if !slices.ContainsFunc(idList.GetMachineIds(), func(machineID *corev1.MachineId) bool {
+		return machineID.GetId() == dpuMachineID
+	}) {
+		return cutil.NewAPIErrorResponse(c, http.StatusNotFound, "Could not find DPU Machine with specified ID", nil)
 	}
 
 	var machineList corev1.MachineList
