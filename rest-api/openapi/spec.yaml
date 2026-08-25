@@ -10589,6 +10589,56 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+  '/v2/org/{org}/nico/dpu/{dpuMachineId}':
+    parameters:
+      - schema:
+          type: string
+        name: org
+        in: path
+        required: true
+        description: Name of the Org
+      - schema:
+          type: string
+        name: dpuMachineId
+        in: path
+        required: true
+        description: ID of the DPU Machine
+    get:
+      operationId: get-dpu-machine
+      summary: Retrieve a DPU Machine for a Site
+      description: |
+        Retrieve one DPU Machine for a Site. By default, `dpuNetworkConfig` is `null`. Set `includeNetworkConfig` to `true` to retrieve the network configuration fields exposed by the REST API. Internal-only and sensitive Core fields are omitted.
+
+        User must have authorization role with `PROVIDER_ADMIN` suffix on the org that owns the Site.
+      tags:
+        - Machine
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          in: query
+          name: siteId
+          required: true
+          description: ID of the Site
+        - schema:
+            type: boolean
+            default: false
+          in: query
+          name: includeNetworkConfig
+          description: Include network configuration fields exposed by the REST API
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpuMachineSummary'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
   '/v2/org/{org}/nico/machine/{machineId}/dpu':
     parameters:
       - schema:
@@ -29437,7 +29487,7 @@ components:
     DpuMachineSummary:
       title: DpuMachineSummary
       type: object
-      description: A DPU Machine returned by the site-wide list. Network configuration is unavailable and is always null.
+      description: A DPU Machine returned by a site-scoped DPU lookup. Network configuration is null unless the endpoint supports and receives an explicit request for it.
       x-go-has-nullable-required-properties: true
       x-go-nullable-required-properties:
         - bmcInfo
@@ -29510,13 +29560,10 @@ components:
           type: string
           description: Lifecycle state of the DPU
         dpuNetworkConfig:
-          x-go-required-nullable: true
-          type:
-            - object
-            - 'null'
-          const: null
-          additionalProperties: false
-          description: Network configuration is unavailable in the site-wide list response
+          oneOf:
+            - $ref: '#/components/schemas/DpuNetworkConfig'
+            - type: 'null'
+          description: Network configuration fields exposed by the REST API, or null when not requested or unavailable
         lastRebooted:
           type:
             - string

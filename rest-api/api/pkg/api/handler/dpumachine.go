@@ -190,3 +190,125 @@ func (gadmh GetAllDpuMachinesHandler) Handle(c echo.Context) error {
 	logger.Info().Int("total", total).Int("returned", len(apiDpuMachines)).Msg("finishing API handler")
 	return c.JSON(http.StatusOK, apiDpuMachines)
 }
+
+// GetDpuMachineHandler retrieves one DPU Machine for a Site via Core.
+type GetDpuMachineHandler struct {
+	dbSession  *cdb.Session
+	scp        *sc.ClientPool
+	tracerSpan *cutil.TracerSpan
+}
+
+// NewGetDpuMachineHandler returns a handler for retrieving one DPU Machine.
+func NewGetDpuMachineHandler(dbSession *cdb.Session, scp *sc.ClientPool) GetDpuMachineHandler {
+	return GetDpuMachineHandler{
+		dbSession:  dbSession,
+		scp:        scp,
+		tracerSpan: cutil.NewTracerSpan(),
+	}
+}
+
+// Handle godoc
+// @Summary Retrieve a DPU Machine for a Site
+// @Description Retrieve one DPU Machine for a Site. Network configuration is null unless includeNetworkConfig is true.
+// @Tags Machine
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param org path string true "Name of NGC organization"
+// @Param dpuMachineId path string true "ID of DPU Machine"
+// @Param siteId query string true "ID of Site"
+// @Param includeNetworkConfig query boolean false "Include DPU network configuration" default(false)
+// @Success 200 {object} model.APIDpuMachine
+// @Router /v2/org/{org}/nico/dpu/{dpuMachineId} [get]
+func (gdmh GetDpuMachineHandler) Handle(c echo.Context) error {
+	org, dbUser, ctx, logger, handlerSpan := common.SetupHandler("DpuMachine", "Get", c, gdmh.tracerSpan)
+	if handlerSpan != nil {
+		defer handlerSpan.End()
+	}
+
+	apiRequest := model.APIGetDpuMachineRequest{}
+	err := common.ValidateKnownQueryParams(c.QueryParams(), apiRequest)
+	if err != nil {
+		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+	}
+	err = c.Bind(&apiRequest)
+	if err != nil {
+		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, "Failed to parse request data, potentially invalid structure", nil)
+	}
+	err = apiRequest.Validate()
+	if err != nil {
+		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, "Error validating DPU Machine retrieval request data", err)
+	}
+
+	dpuMachineID := c.Param("id")
+	stc, siteID, apiErr := common.AuthorizeProviderSiteForCore(common.AuthorizeProviderSiteForCoreInput{
+		Ctx:       ctx,
+		Logger:    logger,
+		DBSession: gdmh.dbSession,
+		SCP:       gdmh.scp,
+		Org:       org,
+		User:      dbUser,
+		SiteID:    apiRequest.SiteID,
+	})
+	if apiErr != nil {
+		return cutil.NewAPIErrorResponse(c, apiErr.Code, apiErr.Message, apiErr.Data)
+	}
+	site, err := common.GetSiteFromIDString(ctx, nil, siteID, gdmh.dbSession)
+	if err != nil {
+		logger.Error().Err(err).Msg("failed to retrieve authorized Site")
+		return cutil.NewAPIErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve Site due to DB error", nil)
+	}
+
+	var machineList corev1.MachineList
+	apiErr = common.ExecuteCoreGRPC(
+		ctx,
+		stc,
+		corev1.Forge_FindMachinesByIds_FullMethodName,
+		&corev1.MachinesByIdsRequest{MachineIds: []*corev1.MachineId{{Id: dpuMachineID}}},
+		&machineList,
+		siteID,
+	)
+	if apiErr != nil {
+		logAPIError(logger, apiErr, "failed to retrieve DPU Machine by ID")
+		return cutil.NewAPIErrorResponse(c, apiErr.Code, apiErr.Message, nil)
+	}
+
+	var machine *corev1.Machine
+	for _, candidate := range machineList.GetMachines() {
+		if candidate.GetId().GetId() == dpuMachineID && candidate.GetMachineType() == corev1.MachineType_DPU {
+			machine = candidate
+			break
+		}
+	}
+	if machine == nil {
+		return cutil.NewAPIErrorResponse(c, http.StatusNotFound, "Could not find DPU Machine with specified ID", nil)
+	}
+
+	dpuMachine := &corev1.DpuMachine{Machine: machine}
+	if apiRequest.IncludeNetworkConfig {
+		networkConfig := &corev1.ManagedHostNetworkConfigResponse{}
+		apiErr = common.ExecuteCoreGRPC(
+			ctx,
+			stc,
+			corev1.Forge_GetManagedHostNetworkConfig_FullMethodName,
+			&corev1.ManagedHostNetworkConfigRequest{DpuMachineId: &corev1.MachineId{Id: dpuMachineID}},
+			networkConfig,
+			siteID,
+		)
+		if apiErr != nil {
+			logAPIError(logger, apiErr, "failed to retrieve DPU Machine network configuration")
+			return cutil.NewAPIErrorResponse(c, apiErr.Code, apiErr.Message, nil)
+		}
+		dpuMachine.DpuNetworkConfig = networkConfig
+	}
+
+	apiDpuMachine := model.APIDpuMachine{}
+	apiDpuMachine.FromProto(dpuMachine, model.APIDpuMachineProtoContext{
+		HostMachineID:            machine.GetStatus().GetAssociatedHostMachineId().GetId(),
+		SiteID:                   site.ID,
+		InfrastructureProviderID: site.InfrastructureProviderID,
+	})
+
+	logger.Info().Str("dpuMachineId", dpuMachineID).Msg("finishing API handler")
+	return c.JSON(http.StatusOK, apiDpuMachine)
+}

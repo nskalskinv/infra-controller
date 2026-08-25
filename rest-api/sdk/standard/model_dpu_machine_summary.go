@@ -23,7 +23,7 @@ import (
 // checks if the DpuMachineSummary type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &DpuMachineSummary{}
 
-// DpuMachineSummary A DPU Machine returned by the site-wide list. Network configuration is unavailable and is always null.
+// DpuMachineSummary A DPU Machine returned by a site-scoped DPU lookup. Network configuration is null unless the endpoint supports and receives an explicit request for it.
 type DpuMachineSummary struct {
 	// ID of the DPU Machine
 	Id string `json:"id"`
@@ -49,8 +49,8 @@ type DpuMachineSummary struct {
 	Labels map[string]string `json:"labels"`
 	// Lifecycle state of the DPU
 	State string `json:"state"`
-	// Network configuration is unavailable in the site-wide list response
-	DpuNetworkConfig map[string]interface{} `json:"dpuNetworkConfig"`
+	// Network configuration fields exposed by the REST API, or null when not requested or unavailable
+	DpuNetworkConfig NullableDpuNetworkConfig `json:"dpuNetworkConfig"`
 	// Last reboot timestamp
 	LastRebooted NullableTime `json:"lastRebooted"`
 	// Physical placement of the DPU Machine within its Rack, when known
@@ -63,7 +63,7 @@ type _DpuMachineSummary DpuMachineSummary
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewDpuMachineSummary(id string, infrastructureProviderId string, siteId string, hostMachineId string, dpuAgentVersion string, bmcInfo NullableMachineBMCInfo, dmiData NullableMachineDMIData, interfaces []DpuMachineInterface, softwareComponents []DpuMachineSoftwareComponent, health NullableMachineHealth, labels map[string]string, state string, dpuNetworkConfig map[string]interface{}, lastRebooted NullableTime, placementInRack NullablePlacementInRack) *DpuMachineSummary {
+func NewDpuMachineSummary(id string, infrastructureProviderId string, siteId string, hostMachineId string, dpuAgentVersion string, bmcInfo NullableMachineBMCInfo, dmiData NullableMachineDMIData, interfaces []DpuMachineInterface, softwareComponents []DpuMachineSoftwareComponent, health NullableMachineHealth, labels map[string]string, state string, dpuNetworkConfig NullableDpuNetworkConfig, lastRebooted NullableTime, placementInRack NullablePlacementInRack) *DpuMachineSummary {
 	this := DpuMachineSummary{}
 	this.Id = id
 	this.InfrastructureProviderId = infrastructureProviderId
@@ -390,29 +390,29 @@ func (o *DpuMachineSummary) SetState(v string) {
 }
 
 // GetDpuNetworkConfig returns the DpuNetworkConfig field value
-// If the value is explicit nil, the zero value for map[string]interface{} will be returned
-func (o *DpuMachineSummary) GetDpuNetworkConfig() map[string]interface{} {
-	if o == nil {
-		var ret map[string]interface{}
+// If the value is explicit nil, the zero value for DpuNetworkConfig will be returned
+func (o *DpuMachineSummary) GetDpuNetworkConfig() DpuNetworkConfig {
+	if o == nil || o.DpuNetworkConfig.Get() == nil {
+		var ret DpuNetworkConfig
 		return ret
 	}
 
-	return o.DpuNetworkConfig
+	return *o.DpuNetworkConfig.Get()
 }
 
 // GetDpuNetworkConfigOk returns a tuple with the DpuNetworkConfig field value
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *DpuMachineSummary) GetDpuNetworkConfigOk() (map[string]interface{}, bool) {
-	if o == nil || IsNil(o.DpuNetworkConfig) {
-		return map[string]interface{}{}, false
+func (o *DpuMachineSummary) GetDpuNetworkConfigOk() (*DpuNetworkConfig, bool) {
+	if o == nil {
+		return nil, false
 	}
-	return o.DpuNetworkConfig, true
+	return o.DpuNetworkConfig.Get(), o.DpuNetworkConfig.IsSet()
 }
 
 // SetDpuNetworkConfig sets field value
-func (o *DpuMachineSummary) SetDpuNetworkConfig(v map[string]interface{}) {
-	o.DpuNetworkConfig = v
+func (o *DpuMachineSummary) SetDpuNetworkConfig(v DpuNetworkConfig) {
+	o.DpuNetworkConfig.Set(&v)
 }
 
 // GetLastRebooted returns the LastRebooted field value
@@ -489,7 +489,7 @@ func (o DpuMachineSummary) ToMap() (map[string]interface{}, error) {
 	toSerialize["health"] = o.Health.Get()
 	toSerialize["labels"] = o.Labels
 	toSerialize["state"] = o.State
-	toSerialize["dpuNetworkConfig"] = o.DpuNetworkConfig
+	toSerialize["dpuNetworkConfig"] = o.DpuNetworkConfig.Get()
 	toSerialize["lastRebooted"] = o.LastRebooted.Get()
 	toSerialize["placementInRack"] = o.PlacementInRack.Get()
 	return toSerialize, nil

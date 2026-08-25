@@ -129,12 +129,153 @@ func TestGetAllDpuMachinesHandler_HandleRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
+func TestGetDpuMachineHandler_Handle(t *testing.T) {
+	tests := []struct {
+		name               string
+		roles              []string
+		target             func(*getDpuMachineHandlerFixture) string
+		machine            *corev1.Machine
+		networkConfig      *corev1.ManagedHostNetworkConfigResponse
+		wantStatus         int
+		wantNetworkConfig  bool
+		wantProxiedMethods []string
+		wantErrorMessage   string
+	}{
+		{
+			name:  "retrieves DPU without network configuration by default",
+			roles: []string{authz.ProviderAdminRole},
+			target: func(f *getDpuMachineHandlerFixture) string {
+				return "/?siteId=" + f.siteID
+			},
+			machine: &corev1.Machine{
+				Id:          &corev1.MachineId{Id: "dpu-1"},
+				MachineType: corev1.MachineType_DPU,
+				State:       "Ready",
+				Status: &corev1.MachineStatus{
+					AssociatedHostMachineId: &corev1.MachineId{Id: "host-1"},
+				},
+			},
+			wantStatus:         http.StatusOK,
+			wantProxiedMethods: []string{corev1.Forge_FindMachinesByIds_FullMethodName},
+		},
+		{
+			name:  "includes network configuration when requested",
+			roles: []string{authz.ProviderAdminRole},
+			target: func(f *getDpuMachineHandlerFixture) string {
+				return "/?siteId=" + f.siteID + "&includeNetworkConfig=true"
+			},
+			machine: &corev1.Machine{
+				Id:          &corev1.MachineId{Id: "dpu-1"},
+				MachineType: corev1.MachineType_DPU,
+				State:       "Ready",
+				Status: &corev1.MachineStatus{
+					AssociatedHostMachineId: &corev1.MachineId{Id: "host-1"},
+				},
+			},
+			networkConfig:     &corev1.ManagedHostNetworkConfigResponse{Asn: 65001},
+			wantStatus:        http.StatusOK,
+			wantNetworkConfig: true,
+			wantProxiedMethods: []string{
+				corev1.Forge_FindMachinesByIds_FullMethodName,
+				corev1.Forge_GetManagedHostNetworkConfig_FullMethodName,
+			},
+		},
+		{
+			name:  "rejects a host Machine ID",
+			roles: []string{authz.ProviderAdminRole},
+			target: func(f *getDpuMachineHandlerFixture) string {
+				return "/?siteId=" + f.siteID
+			},
+			machine: &corev1.Machine{
+				Id:          &corev1.MachineId{Id: "dpu-1"},
+				MachineType: corev1.MachineType_HOST,
+			},
+			wantStatus:         http.StatusNotFound,
+			wantProxiedMethods: []string{corev1.Forge_FindMachinesByIds_FullMethodName},
+			wantErrorMessage:   "Could not find DPU Machine with specified ID",
+		},
+		{
+			name:  "rejects unknown query parameters",
+			roles: []string{authz.ProviderAdminRole},
+			target: func(f *getDpuMachineHandlerFixture) string {
+				return "/?siteId=" + f.siteID + "&unknown=true"
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:  "rejects malformed network configuration flag",
+			roles: []string{authz.ProviderAdminRole},
+			target: func(f *getDpuMachineHandlerFixture) string {
+				return "/?siteId=" + f.siteID + "&includeNetworkConfig=invalid"
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:  "rejects tenant role",
+			roles: []string{authz.TenantAdminRole},
+			target: func(f *getDpuMachineHandlerFixture) string {
+				return "/?siteId=" + f.siteID
+			},
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newGetDpuMachineHandlerFixture(t, tt.roles)
+			if tt.machine != nil {
+				fixture.expectProxyResponse(t, &corev1.MachineList{Machines: []*corev1.Machine{tt.machine}})
+			}
+			if tt.networkConfig != nil {
+				fixture.expectProxyResponse(t, tt.networkConfig)
+			}
+
+			rec := fixture.request(t, tt.target(fixture), "dpu-1")
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			require.Len(t, fixture.proxiedReqs, len(tt.wantProxiedMethods))
+			for i, wantMethod := range tt.wantProxiedMethods {
+				assert.Equal(t, wantMethod, fixture.proxiedReqs[i].FullMethod)
+			}
+			if tt.wantNetworkConfig {
+				var networkConfigRequest corev1.ManagedHostNetworkConfigRequest
+				require.NoError(t, protojson.Unmarshal(fixture.proxiedReqs[1].RequestJSON, &networkConfigRequest))
+				assert.Equal(t, "dpu-1", networkConfigRequest.GetDpuMachineId().GetId())
+			}
+
+			if tt.wantStatus == http.StatusOK {
+				var response model.APIDpuMachine
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+				assert.Equal(t, "dpu-1", response.ID)
+				assert.Equal(t, "host-1", response.HostMachineID)
+				assert.Equal(t, tt.wantNetworkConfig, response.DpuNetworkConfig != nil)
+			}
+			if tt.wantErrorMessage != "" {
+				var apiErr struct {
+					Message string `json:"message"`
+				}
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiErr))
+				assert.Equal(t, tt.wantErrorMessage, apiErr.Message)
+			}
+		})
+	}
+}
+
 type getAllDpuMachinesHandlerFixture struct {
 	org         string
 	siteID      string
 	providerID  string
 	user        interface{}
 	handler     GetAllDpuMachinesHandler
+	tsc         *tmocks.Client
+	proxiedReqs []grpcproxy.Request
+}
+
+type getDpuMachineHandlerFixture struct {
+	org         string
+	siteID      string
+	providerID  string
+	user        interface{}
+	handler     GetDpuMachineHandler
 	tsc         *tmocks.Client
 	proxiedReqs []grpcproxy.Request
 }
@@ -169,7 +310,52 @@ func newGetAllDpuMachinesHandlerFixture(t *testing.T, roles []string) *getAllDpu
 	}
 }
 
+func newGetDpuMachineHandlerFixture(t *testing.T, roles []string) *getDpuMachineHandlerFixture {
+	t.Helper()
+	dbSession := common.TestInitDB(t)
+	t.Cleanup(dbSession.Close)
+	common.TestSetupSchema(t, dbSession)
+
+	org := "test-org-" + uuid.NewString()
+	user := common.TestBuildUser(t, dbSession, "test-starfleet-id-"+uuid.NewString(), org, roles)
+	provider := common.TestBuildInfrastructureProvider(t, dbSession, "Test Infrastructure Provider", org, user)
+	site := common.TestBuildSite(t, dbSession, provider, "Test Site", user)
+	sDAO := cdbm.NewSiteDAO(dbSession)
+	_, err := sDAO.Update(context.Background(), nil, cdbm.SiteUpdateInput{
+		SiteID: site.ID,
+		Status: cutil.GetPtr(cdbm.SiteStatusRegistered),
+	})
+	require.NoError(t, err)
+
+	tsc := &tmocks.Client{}
+	scp := sc.NewClientPool(nil)
+	scp.IDClientMap[site.ID.String()] = tsc
+	return &getDpuMachineHandlerFixture{
+		org:        org,
+		siteID:     site.ID.String(),
+		providerID: provider.ID.String(),
+		user:       user,
+		handler:    NewGetDpuMachineHandler(dbSession, scp),
+		tsc:        tsc,
+	}
+}
+
 func (f *getAllDpuMachinesHandlerFixture) expectProxyResponse(t *testing.T, response proto.Message) {
+	t.Helper()
+	wrun := &tmocks.WorkflowRun{}
+	wrun.On("Get", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		out := args.Get(1).(*grpcproxy.Response)
+		responseJSON, err := protojson.Marshal(response)
+		require.NoError(t, err)
+		out.ResponseJSON = responseJSON
+	}).Return(nil).Once()
+	f.tsc.On("ExecuteWorkflow", mock.Anything, mock.Anything, grpcproxy.Core.WorkflowName, mock.Anything).
+		Run(func(args mock.Arguments) {
+			f.proxiedReqs = append(f.proxiedReqs, args.Get(3).(grpcproxy.Request))
+		}).Return(wrun, nil).Once()
+}
+
+func (f *getDpuMachineHandlerFixture) expectProxyResponse(t *testing.T, response proto.Message) {
 	t.Helper()
 	wrun := &tmocks.WorkflowRun{}
 	wrun.On("Get", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -192,6 +378,19 @@ func (f *getAllDpuMachinesHandlerFixture) request(t *testing.T, target string) *
 	ec := e.NewContext(req, rec)
 	ec.SetParamNames("orgName")
 	ec.SetParamValues(f.org)
+	ec.Set("user", f.user)
+	require.NoError(t, f.handler.Handle(ec))
+	return rec
+}
+
+func (f *getDpuMachineHandlerFixture) request(t *testing.T, target string, dpuMachineID string) *httptest.ResponseRecorder {
+	t.Helper()
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	rec := httptest.NewRecorder()
+	ec := e.NewContext(req, rec)
+	ec.SetParamNames("orgName", "id")
+	ec.SetParamValues(f.org, dpuMachineID)
 	ec.Set("user", f.user)
 	require.NoError(t, f.handler.Handle(ec))
 	return rec

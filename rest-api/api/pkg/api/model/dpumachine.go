@@ -30,6 +30,22 @@ func (r *APIGetAllDpuMachineRequest) Validate() error {
 	)
 }
 
+// APIGetDpuMachineRequest binds query parameters for GET /dpu/:id.
+type APIGetDpuMachineRequest struct {
+	SiteID               string `query:"siteId"`
+	IncludeNetworkConfig bool   `query:"includeNetworkConfig"`
+}
+
+// Validate checks the DPU retrieval query shape.
+func (r *APIGetDpuMachineRequest) Validate() error {
+	return validation.ValidateStruct(r,
+		validation.Field(&r.SiteID,
+			validation.Required.Error(validationErrorValueRequired),
+			validationis.UUID.Error(validationErrorInvalidUUID),
+		),
+	)
+}
+
 // APIDpuNetworkConfig represents the network configuration fields exposed by the REST API for a DPU.
 // Internal-only and sensitive Core fields are omitted; this is not the complete Core configuration.
 type APIDpuNetworkConfig struct {
