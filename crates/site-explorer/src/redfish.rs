@@ -1618,15 +1618,46 @@ fn record_evaluated_boot_interface(
 fn redact_nv_redfish_response(text: &str, password: &str) -> String {
     if password.is_empty() {
         text.to_string()
+    } else if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) {
+        redact_password_from_json(&mut value, password);
+        serde_json::to_string(&value).expect("serializing a JSON value cannot fail")
     } else {
-        let serialized = serde_json::to_string(password).expect("serializing a string cannot fail");
-        let json_escaped = serialized
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-            .expect("a serialized string is enclosed in quotes");
-        text.replace(json_escaped, "REDACTED")
-            .replace(password, "REDACTED")
+        redact_password_from_text(text, password)
     }
+}
+
+fn redact_password_from_json(value: &mut serde_json::Value, password: &str) {
+    match value {
+        serde_json::Value::String(text) => {
+            *text = text.replace(password, "REDACTED");
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                redact_password_from_json(value, password);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            let original = std::mem::take(fields);
+            *fields = original
+                .into_iter()
+                .map(|(key, mut value)| {
+                    redact_password_from_json(&mut value, password);
+                    (key.replace(password, "REDACTED"), value)
+                })
+                .collect();
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
+fn redact_password_from_text(text: &str, password: &str) -> String {
+    let serialized = serde_json::to_string(password).expect("serializing a string cannot fail");
+    let json_escaped = serialized
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .expect("a serialized string is enclosed in quotes");
+    text.replace(json_escaped, "REDACTED")
+        .replace(password, "REDACTED")
 }
 
 fn log_nv_redfish_http_failure(
@@ -1813,16 +1844,10 @@ mod tests {
     }
 
     #[test]
-    fn json_escaped_password_is_redacted_from_nv_redfish_response() {
-        let password = "super\"secret\\value";
-        let response = serde_json::json!({
-            "error": format!("request with {password} failed")
-        })
-        .to_string();
-
+    fn alternate_json_password_encodings_are_redacted_from_nv_redfish_response() {
         assert_eq!(
-            redact_nv_redfish_response(&response, password),
-            r#"{"error":"request with REDACTED failed"}"#
+            redact_nv_redfish_response(r#"{"error":"p\u00e4ss\/\uD83D\uDD11"}"#, "päss/🔑"),
+            r#"{"error":"REDACTED"}"#
         );
     }
 
