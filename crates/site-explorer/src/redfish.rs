@@ -424,8 +424,11 @@ impl RedfishClient {
                 complete
             })
             .await
-            .map_err(|err| EndpointExplorationError::Other {
-                details: format!("Cannot Redfish service root: {err}"),
+            .map_err(|err| {
+                log_nv_redfish_http_failure("service root", &err);
+                EndpointExplorationError::Other {
+                    details: format!("Cannot Redfish service root: {err}"),
+                }
             })?;
 
         let mut report = bmc_explorer::nv_generate_exploration_report(
@@ -1610,6 +1613,21 @@ fn record_evaluated_boot_interface(
     }
 }
 
+fn log_nv_redfish_http_failure(context: &str, err: &carbide_redfish::nv_redfish::Error) {
+    use carbide_redfish::nv_redfish::{BmcError, Error};
+
+    if let Error::Bmc(BmcError::InvalidResponse { url, status, text }) = err {
+        tracing::warn!(
+            backend = "nv-redfish",
+            context,
+            url = %url,
+            error_code = status.as_u16(),
+            error_message = %text,
+            "external call failed"
+        );
+    }
+}
+
 fn map_nv_redfish_explore_error(
     err: bmc_explorer::Error<carbide_redfish::nv_redfish::RedfishBmc>,
 ) -> EndpointExplorationError {
@@ -1718,8 +1736,8 @@ mod tests {
 
     use super::{
         BootInterfaceTarget, EndpointExplorationError, MachineSetupStatus, RedfishClient,
-        fetch_machine_setup_status, nv_bmc_explore_config, record_evaluated_boot_interface,
-        should_fetch_network_adapter_ports,
+        fetch_machine_setup_status, log_nv_redfish_http_failure, nv_bmc_explore_config,
+        record_evaluated_boot_interface, should_fetch_network_adapter_ports,
     };
 
     fn test_addr() -> SocketAddr {
@@ -1730,6 +1748,36 @@ mod tests {
         let proxy_address = Arc::new(ArcSwap::new(Arc::new(None)));
         let nv_pool = Arc::new(NvRedfishClientPool::new(proxy_address));
         RedfishClient::new(sim, nv_pool)
+    }
+
+    #[test]
+    fn service_root_http_failure_logs_structured_details() {
+        use carbide_redfish::nv_redfish::{BmcError, Error};
+
+        let error: carbide_redfish::nv_redfish::Error = Error::Bmc(BmcError::InvalidResponse {
+            url: "https://bmc.example/redfish/v1/".parse().expect("URL"),
+            status: http::StatusCode::BAD_GATEWAY,
+            text: "service unavailable".to_string(),
+        });
+
+        let logs = carbide_instrument::testing::capture_logs(|| {
+            log_nv_redfish_http_failure("service root", &error);
+        });
+
+        assert_eq!(logs.len(), 1);
+        let failed_call = &logs[0];
+        assert_eq!(failed_call.message, "external call failed");
+        assert_eq!(failed_call.field("backend"), Some("nv-redfish"));
+        assert_eq!(failed_call.field("context"), Some("service root"));
+        assert_eq!(
+            failed_call.field("url"),
+            Some("https://bmc.example/redfish/v1/")
+        );
+        assert_eq!(failed_call.field("error_code"), Some("502"));
+        assert_eq!(
+            failed_call.field("error_message"),
+            Some("service unavailable")
+        );
     }
 
     #[tokio::test]
