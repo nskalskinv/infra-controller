@@ -128,7 +128,7 @@ Path: `deploy/nico-base/api/`
   - site explorer enablement
   - TLS paths under `[tls]` (aligned with the SPIFFE Secret mount)
   - Casbin policy path under `[auth]`
-  - `[credentials.file]` only for the path and polling interval of a mounted UFM credential file; never put the bearer token in this ConfigMap.
+  - `[credentials.file]` only for the path, polling interval, and optional legacy-fallback policy of a mounted UFM credential file; never put the bearer token in this ConfigMap.
 - For SA / lab environments it is common to run with **permissive authorization** (for example by enabling an “allow all trusted certs” rule in the Casbin policy). A hardened deployment should tighten these rules.
 
 **Quick start**
@@ -171,7 +171,11 @@ both in `kustomization.yaml`:
 [credentials.file]
 path = "/var/run/secrets/nico/ufm/credentials.yaml"
 poll_interval = "60s"
+# This file supplies every UFM fabric, so make the local sources authoritative.
+allow_legacy_ufm_fallback = false
 ```
+
+`poll_interval` defaults to `60s` and must be greater than zero.
 
 ```yaml
 # kustomization.yaml
@@ -213,7 +217,20 @@ spec:
 The `default` entry must match the name under `[ib_fabrics.<name>]`. NICo
 watches and polls the mounted file, so a valid projected-Secret replacement is
 used without a pod restart. An invalid replacement keeps the last valid
-credential active.
+credential active. Because the file may contain non-UFM credentials without any
+UFM entries, legacy UFM fallback defaults to `true`. Leave it enabled during
+migration, then set
+`allow_legacy_ufm_fallback = false` after the local sources contain every
+configured fabric. In that authoritative mode, a missing fabric entry prevents
+startup when IB management is enabled rather than falling back to Vault or
+Postgres unless the separately enabled local environment source supplies it. If
+a valid reload later removes an entry, its next lookup fails and increments
+`carbide_ufm_local_credential_missing_total`, and
+`nico-admin-cli credential add-ufm` and `delete-ufm` return an error rather than
+changing Vault or Postgres. When the environment source supplies the fabric,
+update that credential and restart NICo; otherwise update the mounted file.
+Environment credentials take precedence over the file. Leaving fallback enabled
+permits those legacy backend mutations.
 
 ---
 

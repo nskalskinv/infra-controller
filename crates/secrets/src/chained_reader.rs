@@ -15,11 +15,59 @@
  * limitations under the License.
  */
 use async_trait::async_trait;
+use carbide_instrument::{Event, emit};
 
 use crate::SecretsError;
 use crate::credentials::{CredentialKey, CredentialReader, Credentials};
 
 pub struct ChainedCredentialReader(Vec<Box<dyn CredentialReader>>);
+
+/// Operator action shared by authoritative-file read and mutation errors.
+pub const UFM_LOCAL_CREDENTIAL_REMEDIATION: &str =
+    // xtask:allow-error-case: UFM and NICo are product names
+    "when environment credentials supply the UFM fabric, update them and restart NICo; otherwise \
+     update the watched credential file (environment credentials take precedence over the file); \
+     for a staged migration, set credentials.file.allow_legacy_ufm_fallback = true to enable \
+     legacy backend access";
+
+/// Stops UFM credential lookup before the persistent backend portion of a
+/// reader chain. Place this after local environment and file readers.
+#[derive(Debug)]
+pub struct UfmCredentialFallbackBlocker;
+
+#[derive(Event)]
+#[event(
+    event_name = "ufm_local_credential_missing",
+    metric_name = "carbide_ufm_local_credential_missing_total",
+    component = "nico-api",
+    log = error,
+    metric = counter,
+    message = "authoritative local UFM credential is missing",
+    describe = "Number of UFM credential lookups rejected because authoritative local sources lack the configured fabric."
+)]
+struct UfmLocalCredentialMissing {
+    #[context]
+    fabric: String,
+}
+
+#[async_trait]
+impl CredentialReader for UfmCredentialFallbackBlocker {
+    async fn get_credentials(
+        &self,
+        key: &CredentialKey,
+    ) -> Result<Option<Credentials>, SecretsError> {
+        let CredentialKey::UfmAuth { fabric } = key else {
+            return Ok(None);
+        };
+
+        emit(UfmLocalCredentialMissing {
+            fabric: fabric.clone(),
+        });
+        Err(SecretsError::UfmCredentialReadBlocked {
+            fabric: fabric.clone(),
+        })
+    }
+}
 
 impl From<Vec<Box<dyn CredentialReader>>> for ChainedCredentialReader {
     fn from(providers: Vec<Box<dyn CredentialReader>>) -> Self {
@@ -47,6 +95,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use carbide_instrument::testing::MetricsCapture;
     use serial_test::serial;
 
     use super::*;
@@ -97,6 +146,66 @@ mod tests {
                 password: "vault-pass".to_string(),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn ufm_fallback_blocker_stops_lookup_before_backend() {
+        let metrics = MetricsCapture::start();
+        let backend = Arc::new(TestCredentialManager::new(Credentials::UsernamePassword {
+            username: "vault-user".to_string(),
+            password: "vault-pass".to_string(),
+        }));
+        let chain: ChainedCredentialReader = vec![
+            Box::new(UfmCredentialFallbackBlocker) as Box<dyn CredentialReader>,
+            Box::new(backend),
+        ]
+        .into();
+        let key = CredentialKey::UfmAuth {
+            fabric: "fabric-a".to_string(),
+        };
+
+        let error = chain
+            .get_credentials(&key)
+            .await
+            .expect_err("UFM lookup must stop before the legacy backend");
+
+        let message = error.to_string();
+        assert!(matches!(
+            error,
+            SecretsError::UfmCredentialReadBlocked { ref fabric } if fabric == "fabric-a"
+        ));
+        assert!(message.contains("fabric-a"));
+        assert!(message.contains(UFM_LOCAL_CREDENTIAL_REMEDIATION));
+        assert_eq!(
+            metrics.counter_delta("carbide_ufm_local_credential_missing_total", &[]),
+            1.0,
+            "the fabric identifier must remain log context rather than a metric label:\n{}",
+            metrics.render()
+        );
+    }
+
+    #[tokio::test]
+    async fn ufm_fallback_blocker_allows_other_credentials_to_continue() {
+        let expected = Credentials::UsernamePassword {
+            username: "vault-user".to_string(),
+            password: "vault-pass".to_string(),
+        };
+        let backend = Arc::new(TestCredentialManager::new(expected.clone()));
+        let chain: ChainedCredentialReader = vec![
+            Box::new(UfmCredentialFallbackBlocker) as Box<dyn CredentialReader>,
+            Box::new(backend),
+        ]
+        .into();
+        let key = CredentialKey::DpuUefi {
+            credential_type: CredentialType::SiteDefault,
+        };
+
+        let value = chain
+            .get_credentials(&key)
+            .await
+            .expect("non-UFM lookup must continue to the backend");
+
+        assert_eq!(value, Some(expected));
     }
 
     #[tokio::test]

@@ -92,9 +92,13 @@ spiffe_machine_base_path = "/{{ .Values.auth.namespace | default (include "nico-
 additional_issuer_cns = [{{ range $i, $cn := .Values.auth.additionalIssuerCns }}{{ if $i }}, {{ end }}{{ $cn | quote }}{{ end }}]
 
 {{- if .Values.credentials.file.existingSecret.name }}
+{{- if not (kindIs "bool" .Values.credentials.file.allowLegacyUfmFallback) }}
+{{- fail "nico-api.credentials.file.allowLegacyUfmFallback must be a boolean when credentials.file.existingSecret.name is set" }}
+{{- end }}
 [credentials.file]
 path = {{ printf "%s/credentials.yaml" (required "nico-api.credentials.file.mountPath is required when credentials.file.existingSecret.name is set" .Values.credentials.file.mountPath) | quote }}
 poll_interval = {{ required "nico-api.credentials.file.pollInterval is required when credentials.file.existingSecret.name is set" .Values.credentials.file.pollInterval | quote }}
+allow_legacy_ufm_fallback = {{ .Values.credentials.file.allowLegacyUfmFallback }}
 {{- end }}
 
 [machine_state_controller]

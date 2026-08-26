@@ -82,7 +82,17 @@ Helm values or NICo TOML, configure
 key of that existing Secret and configures NICo to watch the mounted file. See
 [PREREQUISITES.md](./PREREQUISITES.md#ufm-credentials-optional) for the exact
 Secret file schema, Helm values, default polling interval, and rotation
-behavior.
+behavior. Because the shared file may contain non-UFM credentials without any
+UFM entries, `allowLegacyUfmFallback` defaults to `true`, retaining Vault or
+Postgres UFM fallback and the legacy `credential add-ufm` and `delete-ufm`
+commands. After the local sources contain every configured UFM fabric, set it
+to `false`; when IB management is enabled, a missing local entry then fails
+startup. Those commands return an error. If a valid reload later removes an
+entry, its next lookup fails and increments
+`carbide_ufm_local_credential_missing_total`. When the environment source
+supplies the fabric, operators update that credential and roll the `nico-api`
+pods; otherwise they update the mounted Secret. Environment credentials take
+precedence over the file.
 
 ### NVSwitch mTLS Certificates
 

@@ -814,12 +814,19 @@ another operator-managed secret store instead.
 [credentials.file]
 path = "/var/run/secrets/nico/ufm/credentials.yaml"
 poll_interval = "60s"
+# This file supplies every UFM fabric, so make the local sources authoritative.
+allow_legacy_ufm_fallback = false
 ```
 
 `path` is required when the section is present and may be absolute or relative
-to NICo's working directory. `poll_interval` defaults to `60s`. NICo reads and
-parses the initial file during startup, so a missing or invalid file prevents
-startup.
+to NICo's working directory. `poll_interval` defaults to `60s` and must be
+greater than zero. NICo reads and parses the initial file during startup, so a
+missing or invalid file prevents startup.
+
+When present, `[credentials.file]` replaces the legacy file source selected by
+`CARBIDE_CREDENTIALS_FILE_ENABLED` and `CARBIDE_CREDENTIALS_FILE_PATH`. It does
+not disable the separately enabled environment-credential source, which remains
+first in the local credential chain.
 
 For a fabric named `default`, the mounted YAML file has this shape:
 
@@ -839,9 +846,23 @@ NICo watches the file and also polls it, so an atomically replaced Kubernetes
 projected Secret is loaded without a pod restart. A replacement is used only
 after it parses successfully; a failed reload emits the static-credential
 watcher failure metric and preserves the last valid value. The next UFM
-operation rebuilds its client when this token changes. When the watched file
-does not contain a credential for a fabric, NICo may still consult any
-configured credential backend after the file source.
+operation rebuilds its client when this token changes. Because the shared file
+may contain non-UFM credentials without any UFM entries, legacy UFM fallback
+defaults to `true`. Leave that default during a staged migration from
+backend-managed UFM credentials. After the environment/file sources contain
+every configured fabric, set `allow_legacy_ufm_fallback = false`. When IB
+management is enabled, a missing local UFM credential then prevents startup
+rather than consulting Vault or Postgres. If a valid reload later removes one,
+its next lookup fails and emits the
+`carbide_ufm_local_credential_missing_total` counter. While the file is authoritative,
+`nico-admin-cli credential add-ufm` and `delete-ufm` return
+`FailedPrecondition` without changing Vault or Postgres. Update the active local
+source instead: when the environment source supplies the fabric, update that
+credential and restart NICo; otherwise update the mounted file. Environment
+credentials take precedence over the file. Leaving fallback enabled also
+permits those commands to mutate the legacy backend. This switch affects only
+UFM credentials. Other credential categories continue through their configured
+backend chain when absent from local sources.
 
 ### Operator dev / debug knobs
 

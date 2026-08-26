@@ -276,7 +276,13 @@ credentials:
       name: ""
       key: credentials.yaml
     mountPath: /var/run/secrets/nico/credentials
+    # Must be greater than zero.
     pollInterval: "60s"
+    # The shared file may contain non-UFM credentials without any UFM entries,
+    # so legacy UFM fallback is enabled by default. Set false after the
+    # environment/file sources contain every UFM fabric to make them
+    # authoritative and reject legacy UFM credential API mutations.
+    allowLegacyUfmFallback: true
 
 ## Optional Figment dictionary for CARBIDE_API_DSX_EXCHANGE_EVENT_BUS.
 dsxExchangeEventBusConfig: ""

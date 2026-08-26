@@ -80,6 +80,7 @@ fabric_monitor_run_interval = "101s"
 [credentials.file]
 path = "/var/run/secrets/nico/ufm/credentials.yaml"
 poll_interval = "17s"
+allow_legacy_ufm_fallback = true
 
 [site_explorer]
 enabled = true

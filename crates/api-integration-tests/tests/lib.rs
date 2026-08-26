@@ -34,12 +34,15 @@ use api_test_helper::{
 };
 use bmc_mock::test_support::TEST_MAC_POOL;
 use bmc_mock::{HardwareType, ListenerOrAddress};
+use carbide_secrets::chained_reader::UfmCredentialFallbackBlocker;
+use carbide_secrets::credentials::{CredentialKey, CredentialReader};
 use eyre::ContextCompat;
 use futures::FutureExt;
 use futures::future::join_all;
 use itertools::Itertools;
 use mac_address::MacAddress;
 use model::machine_boot_interface::BootInterfaceSelectionSource;
+use serial_test::serial;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
@@ -52,6 +55,7 @@ fn setup() {
 
 /// Run multiple machine-a-tron integration tests in parallel against a shared carbide API instance.
 #[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn test_integration() -> eyre::Result<()> {
     // NOTE: These tests run two carbide-api servers, and the clients are configured to randomly
     // switch between them on every API call. This helps prevent issues that arise when multiple API
@@ -285,6 +289,17 @@ async fn test_integration() -> eyre::Result<()> {
         r#"carbide_scout_pci_evaluations_total{result="agreement"}"#,
     )
     .await?;
+    UfmCredentialFallbackBlocker
+        .get_credentials(&CredentialKey::UfmAuth {
+            fabric: "catalogue-probe".to_string(),
+        })
+        .await
+        .expect_err("the authoritative UFM blocker must reject a missing local credential");
+    metrics::wait_for_metric_line(
+        &test_env.carbide_metrics_addrs,
+        "carbide_ufm_local_credential_missing_total 1",
+    )
+    .await?;
 
     let metric_infos = metrics::collect_metric_infos(&test_env.carbide_metrics_addrs)?;
     assert!(
@@ -432,6 +447,7 @@ pub(crate) const METRIC_DOC_PATH: &str = concat!(
 /// Run integration tests with machine-a-tron, asserting on metrics. This has to run as its own
 /// test, to make the values in the metrics buckets predictable.
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[serial]
 async fn test_metrics_integration() -> eyre::Result<()> {
     let Some(mut test_env) =
         IntegrationTestEnvironment::try_from_environment(1, "api_server_test_metrics_integration")

@@ -157,7 +157,11 @@ impl FileCredentialsWatcher {
     pub async fn new(config: FileCredentialsConfig) -> Result<Self, SecretsError> {
         let path = config.path();
         let poll_interval = config.poll_interval();
-        let credentials = Arc::new(ArcSwap::from_pointee(Self::load_file(&path).await?));
+        if poll_interval.is_zero() {
+            return Err(SecretsError::GenericError(eyre::eyre!(
+                "credentials.file.poll_interval must be greater than zero"
+            )));
+        }
         let (tx, mut rx) = mpsc::channel(4);
 
         let tx_clone = tx.clone();
@@ -195,6 +199,20 @@ impl FileCredentialsWatcher {
             .watch(&path, RecursiveMode::NonRecursive)
             .map_err(|err| SecretsError::GenericError(err.into()))?;
 
+        // Arm both watchers before reading the initial snapshot. Otherwise a
+        // replacement between the read and watcher registration could remain
+        // invisible until the file changes again. Events received while this
+        // read is in flight remain queued for the reload task below.
+        let initial = match Self::load_file(&path).await {
+            Ok(initial) => initial,
+            Err(error) => {
+                // Close the receiver before dropping the watchers so callbacks
+                // blocked on a full channel can exit during watcher teardown.
+                drop(rx);
+                return Err(error);
+            }
+        };
+        let credentials = Arc::new(ArcSwap::from_pointee(initial));
         let watched_path = path.clone();
         let credentials_clone = credentials.clone();
         tokio::spawn(async move {
@@ -411,6 +429,45 @@ mod tests {
         })
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_initial_file_returns_error() {
+        let dir = tempdir().expect("create temp dir");
+        let file_path = dir.path().join("credentials.yaml");
+        tokio::fs::write(&file_path, "invalid: [")
+            .await
+            .expect("write invalid credentials file");
+
+        let error = FileCredentialsWatcher::new(FileCredentialsConfig {
+            path: Some(file_path),
+            ..Default::default()
+        })
+        .await
+        .err()
+        .expect("invalid initial file must fail");
+
+        assert!(error.to_string().contains("failed to parse"));
+    }
+
+    #[tokio::test]
+    async fn zero_poll_interval_returns_error() {
+        let dir = tempdir().expect("create temp dir");
+        let file_path = dir.path().join("credentials.yaml");
+        tokio::fs::write(&file_path, "{}")
+            .await
+            .expect("write credentials file");
+
+        let error = FileCredentialsWatcher::new(FileCredentialsConfig {
+            path: Some(file_path),
+            poll_interval: Some(Duration::ZERO),
+            ..Default::default()
+        })
+        .await
+        .err()
+        .expect("zero poll interval must fail");
+
+        assert!(error.to_string().contains("greater than zero"));
     }
 
     #[tokio::test]

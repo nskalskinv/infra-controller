@@ -880,7 +880,9 @@ pub struct CarbideConfig {
 
     /// Operator-managed static credential sources. These settings contain
     /// only source locations and reload policy; credential values stay in the
-    /// referenced file or process environment.
+    /// referenced file or process environment. When a file is configured, the
+    /// local environment/file chain is read first. It becomes authoritative
+    /// for UFM credentials only when legacy UFM fallback is disabled.
     #[serde(default)]
     pub credentials: CredentialsConfig,
 
@@ -1032,7 +1034,8 @@ pub struct CertificatesConfig {
 ///
 /// The file source is optional. When present, it takes precedence over the
 /// legacy environment-selected file source and is read before credential
-/// backends such as Vault or Postgres.
+/// backends such as Vault or Postgres. UFM lookup can be made authoritative
+/// for the local sources by disabling legacy UFM fallback.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialsConfig {
@@ -1050,20 +1053,47 @@ pub struct CredentialFileSourceConfig {
     /// containing static credentials.
     pub path: PathBuf,
 
-    /// Interval used to detect projected-Secret replacements that do not emit
-    /// a filesystem watch event. Defaults to 60 seconds.
+    /// Nonzero interval used to detect projected-Secret replacements that do
+    /// not emit a filesystem watch event. Defaults to 60 seconds.
     #[serde(
         default = "CredentialFileSourceConfig::default_poll_interval",
         deserialize_with = "deserialize_duration",
         serialize_with = "as_std_duration"
     )]
     pub poll_interval: std::time::Duration,
+
+    /// Whether UFM credential reads may fall through to persistent credential
+    /// backends and the legacy credential API may mutate those backends.
+    /// Defaults to true because this shared file may be used for non-UFM
+    /// credentials without containing any UFM entries. Set to false when the
+    /// local sources contain all configured UFM fabrics and should be
+    /// authoritative. When IB management is enabled, startup fails if an
+    /// authoritative local source chain lacks credentials for any configured
+    /// UFM fabric.
+    #[serde(default = "CredentialFileSourceConfig::default_allow_legacy_ufm_fallback")]
+    pub allow_legacy_ufm_fallback: bool,
 }
 
 impl CredentialFileSourceConfig {
     /// Returns the polling interval used when `poll_interval` is omitted.
     pub const fn default_poll_interval() -> std::time::Duration {
         std::time::Duration::from_secs(60)
+    }
+
+    /// Preserves backend-managed UFM credentials unless the operator
+    /// explicitly makes the local sources authoritative.
+    pub const fn default_allow_legacy_ufm_fallback() -> bool {
+        true
+    }
+}
+
+impl CredentialsConfig {
+    /// Returns whether the configured file is authoritative for UFM reads and
+    /// credential mutations.
+    pub fn ufm_file_is_authoritative(&self) -> bool {
+        self.file
+            .as_ref()
+            .is_some_and(|file| !file.allow_legacy_ufm_fallback)
     }
 }
 
@@ -4363,10 +4393,12 @@ mod tests {
 [file]
 path = "/var/run/secrets/nico/ufm/credentials.yaml"
 poll_interval = "17s"
+allow_legacy_ufm_fallback = true
 "# => Yields(CredentialsConfig {
                     file: Some(CredentialFileSourceConfig {
                         path: PathBuf::from("/var/run/secrets/nico/ufm/credentials.yaml"),
                         poll_interval: std::time::Duration::from_secs(17),
+                        allow_legacy_ufm_fallback: true,
                     }),
                 }),
             }
@@ -4379,6 +4411,7 @@ path = "credentials.yaml"
                     file: Some(CredentialFileSourceConfig {
                         path: PathBuf::from("credentials.yaml"),
                         poll_interval: std::time::Duration::from_secs(60),
+                        allow_legacy_ufm_fallback: true,
                     }),
                 }),
             }
@@ -4389,6 +4422,27 @@ path = "credentials.yaml"
 
             "unknown field" {
                 "[file]\npath = \"credentials.yaml\"\ntoken = \"not-a-secret-here\"" => Fails,
+            }
+        );
+    }
+
+    #[test]
+    fn ufm_file_authority_contract() {
+        value_scenarios!(
+            run = |allow_legacy_ufm_fallback: Option<bool>| CredentialsConfig {
+                file: allow_legacy_ufm_fallback.map(|allow_legacy_ufm_fallback| {
+                    CredentialFileSourceConfig {
+                        path: PathBuf::from("credentials.yaml"),
+                        poll_interval: std::time::Duration::from_secs(60),
+                        allow_legacy_ufm_fallback,
+                    }
+                }),
+            }
+            .ufm_file_is_authoritative();
+            "credential source modes" {
+                None => false,
+                Some(false) => true,
+                Some(true) => false,
             }
         );
     }
@@ -5589,6 +5643,18 @@ path = "credentials.yaml"
                 "nico-system",
             ),
             (
+                r#"{{ printf "%s/credentials.yaml" (required "nico-api.credentials.file.mountPath is required when credentials.file.existingSecret.name is set" .Values.credentials.file.mountPath) | quote }}"#,
+                r#""/var/run/secrets/nico/ufm/credentials.yaml""#,
+            ),
+            (
+                r#"{{ required "nico-api.credentials.file.pollInterval is required when credentials.file.existingSecret.name is set" .Values.credentials.file.pollInterval | quote }}"#,
+                r#""60s""#,
+            ),
+            (
+                "{{ .Values.credentials.file.allowLegacyUfmFallback }}",
+                "true",
+            ),
+            (
                 "{{ range $i, $cn := .Values.auth.additionalIssuerCns }}{{ if $i }}, {{ end }}{{ $cn | quote }}{{ end }}",
                 "",
             ),
@@ -5746,6 +5812,7 @@ path = "credentials.yaml"
                     file: Some(CredentialFileSourceConfig {
                         path: PathBuf::from("/var/run/secrets/nico/ufm/credentials.yaml"),
                         poll_interval: std::time::Duration::from_secs(17),
+                        allow_legacy_ufm_fallback: true,
                     }),
                 }
             );

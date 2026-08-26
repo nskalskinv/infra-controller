@@ -278,6 +278,7 @@ This file contains a list of metrics exported by NVIDIA Infra Controller (NICo).
 <tr><td>carbide_switches_object_tasks_enqueued_total</td><td>counter</td><td>Number of object handling tasks freshly enqueued for objects of type carbide_switches</td></tr>
 <tr><td>carbide_switches_total</td><td>gauge</td><td>Number of carbide_switches in the system</td></tr>
 <tr><td>carbide_total_ips_count</td><td>gauge</td><td>Number of IPs per network segment</td></tr>
+<tr><td>carbide_ufm_local_credential_missing_total</td><td>counter</td><td>Number of UFM credential lookups rejected because authoritative local sources lack the configured fabric.</td></tr>
 <tr><td>carbide_unavailable_dpu_nic_firmware_update_count</td><td>gauge</td><td>Number of machines in the system that need a DPU/NIC firmware update but are unavailable for update</td></tr>
 <tr><td>carbide_vpc_prefixes_enqueuer_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to enqueue state handling tasks for all carbide_vpc_prefixes in the system</td></tr>
 <tr><td>carbide_vpc_prefixes_handler_latency_in_state_milliseconds</td><td>histogram</td><td>The amount of time it took to invoke the state handler for objects of type carbide_vpc_prefixes in a certain state</td></tr>

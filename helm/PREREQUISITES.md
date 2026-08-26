@@ -153,14 +153,28 @@ nico-api:
         key: credentials.yaml
       mountPath: /var/run/secrets/nico/ufm
       pollInterval: "60s"
+      allowLegacyUfmFallback: false
 ```
 
-The chart writes only the path and polling interval to its ConfigMap, then
-mounts the selected Secret key at
+The chart writes only the path, polling interval, and legacy-fallback policy to
+its ConfigMap, then mounts the selected Secret key at
 `/var/run/secrets/nico/ufm/credentials.yaml`. Updating that key replaces the
 projected file; NICo reloads a valid replacement without a Helm upgrade or pod
 restart, bounded by `pollInterval`. A malformed replacement leaves the last
-valid credential active.
+valid credential active. `pollInterval` defaults to `60s` and must be greater
+than zero. The shared file may contain non-UFM credentials without any UFM
+entries, so `allowLegacyUfmFallback` defaults to `true`. Leave fallback enabled
+during a staged migration, then set it to `false` after the environment/file
+sources contain every configured fabric. With the authoritative `false` value,
+NICo fails startup when IB management is enabled if a configured fabric is
+absent from those sources. A valid reload that later removes one makes its next lookup fail and increments
+`carbide_ufm_local_credential_missing_total`. `nico-admin-cli credential
+add-ufm` and `delete-ufm` return an error instead of
+writing an unused Vault or Postgres credential. When the environment source
+supplies the fabric, update that credential and roll the `nico-api` pods;
+otherwise update the mounted Secret. Environment credentials take precedence
+over the file. Leaving fallback enabled also permits those legacy backend
+mutations.
 
 ### `ssh-host-key` (for nico-ssh-console-rs)
 

@@ -18,10 +18,15 @@
 use std::sync::Arc;
 
 use carbide_api_core::AuthContext;
-use carbide_api_core::test_support::{MAX_BGP_PASSWORD_LENGTH, default_credential_key};
+use carbide_api_core::cfg::file::{CarbideConfig, CredentialFileSourceConfig};
+use carbide_api_core::test_support::{
+    MAX_BGP_PASSWORD_LENGTH, default_config, default_credential_key,
+};
+use carbide_secrets::chained_reader::UFM_LOCAL_CREDENTIAL_REMEDIATION;
 use carbide_secrets::credentials::{
-    BgpCredentialType, BmcCredentialType, CredentialKey, CredentialReader, CredentialType,
-    CredentialWriter, Credentials,
+    BgpCredentialType, BmcCredentialType, CompositeCredentialManager, CredentialKey,
+    CredentialManager, CredentialReader, CredentialType, CredentialWriter, Credentials,
+    UfmCredentialMutationBlocker,
 };
 use carbide_secrets::test_support::credentials::TestCredentialManager;
 use carbide_test_harness::prelude::*;
@@ -33,13 +38,152 @@ use rpc::forge::{
 use tonic::Code;
 
 async fn init(pool: PgPool) -> (TestHarness, Arc<TestCredentialManager>) {
+    init_with_runtime_config(pool, default_config::get()).await
+}
+
+async fn init_with_runtime_config(
+    pool: PgPool,
+    runtime_config: CarbideConfig,
+) -> (TestHarness, Arc<TestCredentialManager>) {
     let credential_manager = Arc::new(TestCredentialManager::default());
-    let api_credential_manager = credential_manager.clone();
+    let api_credential_manager: Arc<dyn CredentialManager> =
+        if runtime_config.credentials.ufm_file_is_authoritative() {
+            Arc::new(CompositeCredentialManager::new(
+                credential_manager.clone(),
+                UfmCredentialMutationBlocker::new(credential_manager.clone()),
+            ))
+        } else {
+            credential_manager.clone()
+        };
     let env = TestHarness::builder(pool)
-        .with_api_builder_fn(move |builder| builder.with_credential_manager(api_credential_manager))
+        .with_api_builder_fn(move |builder| {
+            builder
+                .with_credential_manager(api_credential_manager)
+                .with_runtime_config(Arc::new(runtime_config))
+        })
         .build()
         .await;
     (env, credential_manager)
+}
+
+fn config_with_ufm_file(allow_legacy_ufm_fallback: bool) -> CarbideConfig {
+    let mut config = default_config::get();
+    config.credentials.file = Some(CredentialFileSourceConfig {
+        path: "/var/run/secrets/nico/ufm/credentials.yaml".into(),
+        poll_interval: std::time::Duration::from_secs(60),
+        allow_legacy_ufm_fallback,
+    });
+    config
+}
+
+fn ufm_create_request() -> CredentialCreationRequest {
+    CredentialCreationRequest {
+        credential_type: RpcCredentialType::Ufm.into(),
+        username: Some("https://ufm.example.com".to_string()),
+        password: "test-ufm-token".to_string(),
+        vendor: None,
+        mac_address: None,
+    }
+}
+
+fn ufm_delete_request() -> CredentialDeletionRequest {
+    CredentialDeletionRequest {
+        credential_type: RpcCredentialType::Ufm.into(),
+        username: Some("https://ufm.example.com".to_string()),
+        mac_address: None,
+    }
+}
+
+#[sqlx_test]
+async fn test_ufm_credential_mutations_reject_an_authoritative_file(pool: PgPool) {
+    let (env, credential_manager) =
+        init_with_runtime_config(pool, config_with_ufm_file(false)).await;
+    let key = CredentialKey::UfmAuth {
+        fabric: "default".to_string(),
+    };
+
+    let create_error = env
+        .api()
+        .create_credential(tonic::Request::new(ufm_create_request()))
+        .await
+        .expect_err("authoritative UFM file must reject backend create");
+    assert_eq!(create_error.code(), Code::FailedPrecondition);
+    assert!(create_error.message().contains("credential file"));
+    assert!(
+        create_error
+            .message()
+            .contains(UFM_LOCAL_CREDENTIAL_REMEDIATION)
+    );
+    assert_eq!(
+        credential_manager
+            .get_credentials_from_writer(&key)
+            .await
+            .expect("read backend after rejected create"),
+        None
+    );
+
+    let existing = Credentials::UsernamePassword {
+        username: "legacy-ufm".to_string(),
+        password: "existing-token".to_string(),
+    };
+    credential_manager
+        .set_credentials(&key, &existing)
+        .await
+        .expect("seed legacy UFM credential");
+
+    let delete_error = env
+        .api()
+        .delete_credential(tonic::Request::new(ufm_delete_request()))
+        .await
+        .expect_err("authoritative UFM file must reject backend delete");
+    assert_eq!(delete_error.code(), Code::FailedPrecondition);
+    assert_eq!(delete_error.message(), create_error.message());
+    assert_eq!(
+        credential_manager
+            .get_credentials_from_writer(&key)
+            .await
+            .expect("read backend after rejected delete"),
+        Some(existing)
+    );
+}
+
+#[sqlx_test]
+async fn test_ufm_credential_mutations_allow_legacy_fallback_mode(pool: PgPool) {
+    let (env, credential_manager) =
+        init_with_runtime_config(pool, config_with_ufm_file(true)).await;
+    let key = CredentialKey::UfmAuth {
+        fabric: "default".to_string(),
+    };
+
+    env.api()
+        .create_credential(tonic::Request::new(ufm_create_request()))
+        .await
+        .expect("legacy fallback mode must allow backend create");
+    assert_eq!(
+        credential_manager
+            .get_credentials_from_writer(&key)
+            .await
+            .expect("read backend after create"),
+        Some(Credentials::UsernamePassword {
+            username: "https://ufm.example.com".to_string(),
+            password: "test-ufm-token".to_string(),
+        })
+    );
+
+    env.api()
+        .delete_credential(tonic::Request::new(ufm_delete_request()))
+        .await
+        .expect("legacy fallback mode must allow backend delete");
+    assert_eq!(
+        credential_manager
+            .get_credentials_from_writer(&key)
+            .await
+            .expect("read backend after delete"),
+        Some(Credentials::UsernamePassword {
+            username: "https://ufm.example.com".to_string(),
+            password: String::new(),
+        })
+    );
 }
 
 #[sqlx_test]

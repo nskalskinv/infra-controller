@@ -2,7 +2,45 @@
 
 NICo keeps the credentials it manages (BMC logins, switch and UFM accounts, factory defaults, and so on) in a credentials store. Vault is the historical and default backend. NICo can also store credentials in Postgres, encrypted per credential with envelope encryption, and can read both backends side by side; that combination is what makes a gradual, reversible migration off Vault possible.
 
-This page covers the `[secrets]` section of the `nico-api` config, the Vault-to-Postgres migration walk, and key rotation. If `[secrets]` is absent, nothing here applies: credentials flow through the classic environment, file, and Vault chain.
+`[credentials.file]` is shared by UFM and non-UFM credential categories and may
+contain no UFM entries, so backend-managed UFM credentials remain enabled by
+default. After the local environment/file chain contains every configured UFM
+fabric, set `credentials.file.allow_legacy_ufm_fallback = false` to make that
+chain authoritative for UFM. When IB management is enabled, NICo then fails
+startup if any configured fabric is missing from the local chain. Runtime UFM
+credential resolution does not read historical entries in Vault or Postgres,
+and the legacy UFM credential mutation commands return `FailedPrecondition`.
+This runtime policy does not disable an explicitly configured one-time
+`[secrets].import_from = "vault"` operation: that startup import still copies
+all Vault credentials, including UFM entries, into Postgres, where authoritative
+runtime resolution ignores them. If a valid file reload later removes a
+configured fabric, its next lookup fails and increments
+`carbide_ufm_local_credential_missing_total`. Other credential categories
+continue to use the backend chain described on this page.
+
+This page covers the `[secrets]` section of the `nico-api` config, the
+Vault-to-Postgres migration walk, and key rotation. If `[secrets]` is absent,
+the backend migration and KMS settings below do not apply, and persistent
+credentials use the classic Vault store. The `[credentials.file]` UFM policy
+above still applies to the local environment/file sources that precede it.
+
+Enable the environment source with
+`CARBIDE_CREDENTIALS_ENV_ENABLED=true`. Its default prefix is
+`CARBIDE_STATIC_CREDENTIAL`; override that prefix with
+`CARBIDE_CREDENTIALS_ENV_PREFIX`. Field names are uppercase and separated by
+double underscores. For example, the UFM credential for the `default` fabric
+uses:
+
+```bash
+CARBIDE_CREDENTIALS_ENV_ENABLED=true
+CARBIDE_STATIC_CREDENTIAL__UFM_AUTH_BY_FABRIC__DEFAULT__USERNAME=ignored-by-ufm
+CARBIDE_STATIC_CREDENTIAL__UFM_AUTH_BY_FABRIC__DEFAULT__PASSWORD='<access-token-or-empty-for-mTLS>'
+```
+
+The fabric segment must match the name under `[ib_fabrics.<name>]`. NICo reads
+environment credentials only at startup, so changing one requires restarting
+NICo. Environment credentials take precedence over the watched file and the
+persistent backend chain.
 
 ## How It Works
 

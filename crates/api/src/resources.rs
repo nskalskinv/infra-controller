@@ -27,10 +27,13 @@ use carbide_kms_provider::{
     DEFAULT_TRANSIT_MOUNT, IntegratedKmsProvider, KmsBackend, MultiKmsProvider, TransitKmsProvider,
 };
 use carbide_secrets::certificates::CertificateProvider;
-use carbide_secrets::credentials::{CredentialManager, CredentialReader, CredentialWriter};
+use carbide_secrets::chained_reader::UfmCredentialFallbackBlocker;
+use carbide_secrets::credentials::{
+    CredentialManager, CredentialReader, CredentialWriter, UfmCredentialMutationBlocker,
+};
 use carbide_secrets::{
-    CredentialConfig, ForgeVaultClient, MemoryCredentialStore, SpiffeIdentity, VaultConfig,
-    create_certificate_provider, create_credential_manager_from, create_vault_client,
+    CredentialConfig, ForgeVaultClient, MemoryCredentialStore, SecretsError, SpiffeIdentity,
+    VaultConfig, create_certificate_provider, create_credential_manager_from, create_vault_client,
 };
 use db::work_lock_manager::{self, WorkLockManagerHandle};
 use eyre::WrapErr;
@@ -52,6 +55,12 @@ pub(crate) struct RuntimeResources {
     pub work_lock_manager_handle: WorkLockManagerHandle,
     pub secrets_context: Option<SecretsContext>,
 }
+
+type CredentialRuntimeParts = (
+    Arc<dyn CredentialWriter>,
+    Vec<Box<dyn CredentialReader>>,
+    Option<SecretsContext>,
+);
 
 pub(crate) async fn setup_resources(
     carbide_config: &CarbideConfig,
@@ -95,12 +104,13 @@ pub(crate) async fn setup_resources(
     let local_overrides = local_credential_readers(carbide_config, credential_config).await?;
 
     // With a [secrets] section, the credential chain and write target come from
-    // `backends`/`writer` -- defaulting to env -> file -> vault writing to vault,
-    // so the section alone changes nothing. The one-time vault import is
+    // `backends`/`writer` -- generally defaulting to env -> file -> vault
+    // writing to vault. A configured file stops UFM reads before the backends
+    // unless its legacy fallback is enabled. The one-time vault import is
     // independent: it runs iff `import_from` is set. Without the section, the
     // store comes from CARBIDE_CREDENTIAL_STORE: vault (the default), or an
     // in-memory store for development and testing.
-    let (credential_manager, secrets_context) = if let Some(secrets_config) =
+    let (writer, chain, secrets_context): CredentialRuntimeParts = if let Some(secrets_config) =
         &carbide_config.secrets
     {
         // Reject a nonsensical backends list before anything with side effects
@@ -185,10 +195,7 @@ pub(crate) async fn setup_resources(
             CredentialBackend::Vault => vault_client.clone(),
             CredentialBackend::Postgres => pg_manager,
         };
-        (
-            create_credential_manager_from(writer, chain),
-            Some(SecretsContext { routing, kms }),
-        )
+        (writer, chain, Some(SecretsContext { routing, kms }))
     } else {
         let store: Arc<dyn CredentialManager> = match std::env::var("CARBIDE_CREDENTIAL_STORE")
             .as_deref()
@@ -203,14 +210,19 @@ pub(crate) async fn setup_resources(
             }
         };
         // env -> file -> the configured store; nothing from [secrets] applies.
+        // The local UFM blocker, when configured, stops before the store.
         let chain = local_overrides
             .into_iter()
             .chain(std::iter::once(
                 Box::new(store.clone()) as Box<dyn CredentialReader>
             ))
             .collect();
-        (create_credential_manager_from(store, chain), None)
+        (store, chain, None)
     };
+    // Apply the UFM mutation policy once, after selecting either persistent
+    // writer path, so the two setup branches cannot drift apart.
+    let writer = credential_writer_with_ufm_policy(carbide_config, writer);
+    let credential_manager = create_credential_manager_from(writer, chain);
 
     Ok(RuntimeResources {
         credential_manager,
@@ -316,6 +328,8 @@ async fn local_credential_readers(
         None
     };
     let file_config = file_credentials_config(carbide_config, credential_config);
+    let ufm_file_is_authoritative = carbide_config.credentials.ufm_file_is_authoritative();
+    let authoritative_file_path = ufm_file_is_authoritative.then(|| file_config.path());
     let file_reader: Option<Box<dyn CredentialReader>> = if file_config.enabled() {
         Some(Box::new(
             carbide_secrets::local_credentials::FileCredentialsWatcher::new(file_config).await?,
@@ -323,9 +337,52 @@ async fn local_credential_readers(
     } else {
         None
     };
+    let mut local_readers: Vec<Box<dyn CredentialReader>> =
+        [env_reader, file_reader].into_iter().flatten().collect();
+    if let Some(path) = authoritative_file_path {
+        validate_authoritative_ufm_credentials(carbide_config, &local_readers).await?;
+        tracing::info!(
+            credential_file = %path.display(),
+            "local UFM credential sources are authoritative; legacy backend fallback is disabled"
+        );
+        local_readers.push(Box::new(UfmCredentialFallbackBlocker));
+    }
     // The local overrides that ended up enabled, in order -- always tried
-    // ahead of the backends.
-    Ok([env_reader, file_reader].into_iter().flatten().collect())
+    // ahead of the backends. When legacy UFM fallback is explicitly disabled,
+    // the blocker makes the local sources authoritative for UFM keys only.
+    Ok(local_readers)
+}
+
+async fn validate_authoritative_ufm_credentials(
+    carbide_config: &CarbideConfig,
+    local_readers: &[Box<dyn CredentialReader>],
+) -> eyre::Result<()> {
+    if !carbide_config
+        .ib_config
+        .as_ref()
+        .is_some_and(|config| config.enabled)
+    {
+        return Ok(());
+    }
+    for fabric in carbide_config.ib_fabrics.keys() {
+        let key = carbide_secrets::credentials::CredentialKey::UfmAuth {
+            fabric: fabric.clone(),
+        };
+        let mut found = false;
+        for reader in local_readers {
+            if reader.get_credentials(&key).await?.is_some() {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(SecretsError::UfmCredentialReadBlocked {
+                fabric: fabric.clone(),
+            }
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn file_credentials_config(
@@ -342,6 +399,17 @@ fn file_credentials_config(
             poll_interval: Some(file.poll_interval),
         })
         .unwrap_or_else(|| credential_config.file.clone())
+}
+
+fn credential_writer_with_ufm_policy(
+    carbide_config: &CarbideConfig,
+    writer: Arc<dyn CredentialWriter>,
+) -> Arc<dyn CredentialWriter> {
+    if carbide_config.credentials.ufm_file_is_authoritative() {
+        Arc::new(UfmCredentialMutationBlocker::new(writer))
+    } else {
+        writer
+    }
 }
 
 /// Build the KMS stack from the `[secrets.kms]` config: construct every
@@ -592,6 +660,8 @@ async fn is_import_complete(db_pool: &PgPool) -> eyre::Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    use carbide_secrets::credentials::{CredentialKey, Credentials};
+
     use super::*;
 
     #[test]
@@ -601,6 +671,7 @@ mod tests {
             Some(carbide_api_core::cfg::file::CredentialFileSourceConfig {
                 path: "/var/run/secrets/nico/ufm/credentials.yaml".into(),
                 poll_interval: std::time::Duration::from_secs(17),
+                allow_legacy_ufm_fallback: false,
             });
         let credential_config = CredentialConfig {
             file: carbide_secrets::FileCredentialsConfig {
@@ -622,6 +693,195 @@ mod tests {
             file_config.poll_interval(),
             std::time::Duration::from_secs(17)
         );
+    }
+
+    #[tokio::test]
+    async fn configured_ufm_file_controls_legacy_backend_fallback() {
+        let dir = tempfile::tempdir().expect("create credential directory");
+        let path = dir.path().join("credentials.json");
+        let key = CredentialKey::UfmAuth {
+            fabric: "default".to_string(),
+        };
+        let local_credentials = Credentials::UsernamePassword {
+            username: "local-user".to_string(),
+            password: "local-token".to_string(),
+        };
+        let backend_credentials = Credentials::UsernamePassword {
+            username: "legacy-user".to_string(),
+            password: "legacy-token".to_string(),
+        };
+
+        enum Expected {
+            Local,
+            Backend,
+            Blocked,
+        }
+        let cases = [
+            (
+                "authoritative file entry",
+                r#"{
+  "ufm_auth_by_fabric": {
+    "default": {
+      "username": "local-user",
+      "password": "local-token"
+    }
+  }
+}"#,
+                false,
+                Expected::Local,
+            ),
+            ("authoritative file miss", "{}", false, Expected::Blocked),
+            ("legacy fallback file miss", "{}", true, Expected::Backend),
+        ];
+
+        for (name, file_contents, allow_legacy_ufm_fallback, expected) in cases {
+            tokio::fs::write(&path, file_contents)
+                .await
+                .unwrap_or_else(|error| panic!("{name}: write local credential snapshot: {error}"));
+            let mut carbide_config = carbide_api_core::test_support::default_config::get();
+            let ib_config = carbide_config.ib_config.get_or_insert_default();
+            ib_config.enabled = true;
+            carbide_config.credentials.file =
+                Some(carbide_api_core::cfg::file::CredentialFileSourceConfig {
+                    path: path.clone(),
+                    poll_interval: std::time::Duration::from_secs(60),
+                    allow_legacy_ufm_fallback,
+                });
+            let credential_config = CredentialConfig {
+                env: carbide_secrets::EnvCredentialsConfig {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut readers =
+                match local_credential_readers(&carbide_config, &credential_config).await {
+                    Ok(readers) => {
+                        assert!(
+                            !matches!(expected, Expected::Blocked),
+                            "{name}: authoritative startup unexpectedly succeeded"
+                        );
+                        readers
+                    }
+                    Err(error) => {
+                        assert!(
+                            matches!(expected, Expected::Blocked),
+                            "{name}: build local readers: {error}"
+                        );
+                        assert!(
+                            error.to_string().contains("default")
+                                && error.to_string().contains("allow_legacy_ufm_fallback"),
+                            "{name}: {error}"
+                        );
+                        continue;
+                    }
+                };
+            let backend = MemoryCredentialStore::default();
+            backend
+                .set_credentials(&key, &backend_credentials)
+                .await
+                .expect("seed legacy backend");
+            readers.push(Box::new(backend));
+            let chain = carbide_secrets::ChainedCredentialReader::from(readers);
+
+            let result = chain.get_credentials(&key).await;
+
+            match expected {
+                Expected::Local => assert_eq!(
+                    result.unwrap_or_else(|error| panic!("{name}: file lookup failed: {error}")),
+                    Some(local_credentials.clone()),
+                    "{name}"
+                ),
+                Expected::Backend => assert_eq!(
+                    result.unwrap_or_else(|error| panic!("{name}: backend lookup failed: {error}")),
+                    Some(backend_credentials.clone()),
+                    "{name}"
+                ),
+                Expected::Blocked => unreachable!("handled during startup validation"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn authoritative_ufm_validation_skips_disabled_ib_management() {
+        let dir = tempfile::tempdir().expect("create credential directory");
+        let path = dir.path().join("credentials.json");
+        tokio::fs::write(&path, "{}")
+            .await
+            .expect("write empty credential snapshot");
+        let mut carbide_config = carbide_api_core::test_support::default_config::get();
+        carbide_config.ib_config = None;
+        carbide_config.credentials.file =
+            Some(carbide_api_core::cfg::file::CredentialFileSourceConfig {
+                path,
+                poll_interval: std::time::Duration::from_secs(60),
+                allow_legacy_ufm_fallback: false,
+            });
+        let credential_config = CredentialConfig {
+            env: carbide_secrets::EnvCredentialsConfig {
+                enabled: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        local_credential_readers(&carbide_config, &credential_config)
+            .await
+            .expect("disabled IB management must not require dormant UFM credentials");
+    }
+
+    #[tokio::test]
+    async fn configured_ufm_file_controls_backend_mutations() {
+        let key = CredentialKey::UfmAuth {
+            fabric: "fabric-a".to_string(),
+        };
+        let credentials = Credentials::UsernamePassword {
+            username: "ufm-user".to_string(),
+            password: "ufm-token".to_string(),
+        };
+        let cases = [
+            ("authoritative local sources", false, true),
+            ("legacy backend fallback", true, false),
+        ];
+
+        for (name, allow_legacy_ufm_fallback, expect_blocked) in cases {
+            let mut carbide_config = carbide_api_core::test_support::default_config::get();
+            carbide_config.credentials.file =
+                Some(carbide_api_core::cfg::file::CredentialFileSourceConfig {
+                    path: "credentials.yaml".into(),
+                    poll_interval: std::time::Duration::from_secs(60),
+                    allow_legacy_ufm_fallback,
+                });
+            let backend = Arc::new(MemoryCredentialStore::default());
+            let writer = credential_writer_with_ufm_policy(&carbide_config, backend.clone());
+
+            let result = writer.set_credentials(&key, &credentials).await;
+
+            if expect_blocked {
+                assert!(matches!(
+                    result,
+                    Err(carbide_secrets::SecretsError::UfmCredentialMutationBlocked)
+                ));
+                assert_eq!(
+                    backend
+                        .get_credentials_from_writer(&key)
+                        .await
+                        .unwrap_or_else(|error| panic!("{name}: read backend: {error}")),
+                    None,
+                    "{name}"
+                );
+            } else {
+                result.unwrap_or_else(|error| panic!("{name}: write backend: {error}"));
+                assert_eq!(
+                    backend
+                        .get_credentials_from_writer(&key)
+                        .await
+                        .unwrap_or_else(|error| panic!("{name}: read backend: {error}")),
+                    Some(credentials.clone()),
+                    "{name}"
+                );
+            }
+        }
     }
 
     /// The pool builder rejects zero-valued lifecycle settings before it

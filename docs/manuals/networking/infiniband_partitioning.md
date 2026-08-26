@@ -32,7 +32,7 @@ subnet manager.
 InfiniBand partitioning in NICo is built on the InfiniBand-native P_Key
 mechanism enforced by the subnet manager. The operator-facing chain is:
 
-```
+```text
 Instance ──► IB Interface ──► IbPartition (NICo) ──► P_Key (UFM)
 ```
 
@@ -154,10 +154,20 @@ fabric_monitor_run_interval = "60s"
 
 ### UFM credentials
 
-UFM API credentials are not stored in TOML. They are read from the
-configured secrets backend (Vault under standard deployments) by the UFM
-client during initialisation. Rotate them at the secrets backend; NICo
-picks up the new value on its next client re-initialisation.
+UFM API credentials are not stored in TOML. Runtime lookup checks the optional
+environment source first when `CARBIDE_CREDENTIALS_ENV_ENABLED=true`, followed
+by the watched file when `[credentials.file]` is configured. With neither local
+source enabled, lookup proceeds directly to the configured backend. When
+`credentials.file.allow_legacy_ufm_fallback` is `true` (the default), Vault or
+Postgres may supply a missing local credential; when it is `false`, runtime UFM
+resolution and the legacy mutation commands do not use those backend entries
+and, when IB management is enabled, NICo fails startup if a configured fabric
+is absent from the local sources. An explicitly configured one-time Vault
+import remains independent of this policy. Rotate the active source: watched
+file changes reload at runtime, while environment changes require restarting
+NICo.
+See [Secrets Storage](../../configuration/secrets-storage.md) for the full source
+precedence, runtime-miss metric, and mutation contract.
 
 ---
 

@@ -155,6 +155,8 @@ pub fn create_credential_manager_from(
 #[derive(Debug)]
 pub enum SecretsError {
     GenericError(eyre::Report),
+    UfmCredentialReadBlocked { fabric: String },
+    UfmCredentialMutationBlocked,
 }
 
 impl Display for SecretsError {
@@ -163,6 +165,17 @@ impl Display for SecretsError {
             SecretsError::GenericError(report) => {
                 write!(f, "Secrets operation failed: {}", report)
             }
+            SecretsError::UfmCredentialReadBlocked { fabric } => write!(
+                f,
+                "Secrets operation failed: credential for UFM fabric {fabric:?} is absent from \
+                 the configured local sources; {}",
+                crate::chained_reader::UFM_LOCAL_CREDENTIAL_REMEDIATION
+            ),
+            SecretsError::UfmCredentialMutationBlocked => write!(
+                f,
+                "Secrets operation failed: UFM credential backend mutations are disabled; {}",
+                crate::chained_reader::UFM_LOCAL_CREDENTIAL_REMEDIATION
+            ),
         }
     }
 }
@@ -177,6 +190,8 @@ impl From<SecretsError> for eyre::Report {
     fn from(value: SecretsError) -> Self {
         match value {
             SecretsError::GenericError(report) => report,
+            value @ SecretsError::UfmCredentialReadBlocked { .. } => eyre::eyre!("{value}"),
+            value @ SecretsError::UfmCredentialMutationBlocked => eyre::eyre!("{value}"),
         }
     }
 }
