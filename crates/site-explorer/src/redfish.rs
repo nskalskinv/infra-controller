@@ -409,6 +409,8 @@ impl RedfishClient {
         credentials: Credentials,
         boot_interface: Option<&BootInterfaceTarget>,
     ) -> Result<EndpointExplorationReport, EndpointExplorationError> {
+        let Credentials::UsernamePassword { password, .. } = &credentials;
+        let password = password.clone();
         let service_root = self
             .nv_redfish_client_pool
             .service_root_with_cache_predicate(bmc_ip_address, credentials, |root| {
@@ -425,7 +427,7 @@ impl RedfishClient {
             })
             .await
             .map_err(|err| {
-                log_nv_redfish_http_failure("service root", &err);
+                log_nv_redfish_http_failure("service root", &err, &password);
                 EndpointExplorationError::Other {
                     details: format!("Cannot Redfish service root: {err}"),
                 }
@@ -436,7 +438,7 @@ impl RedfishClient {
             &nv_bmc_explore_config(boot_interface),
         )
         .await
-        .map_err(map_nv_redfish_explore_error)?;
+        .map_err(|err| map_nv_redfish_explore_error(err, &password))?;
 
         record_evaluated_boot_interface(report.machine_setup_status.as_mut(), boot_interface);
 
@@ -1613,16 +1615,29 @@ fn record_evaluated_boot_interface(
     }
 }
 
-fn log_nv_redfish_http_failure(context: &str, err: &carbide_redfish::nv_redfish::Error) {
+fn redact_nv_redfish_response(text: &str, password: &str) -> String {
+    if password.is_empty() {
+        text.to_string()
+    } else {
+        text.replace(password, "REDACTED")
+    }
+}
+
+fn log_nv_redfish_http_failure(
+    context: &str,
+    err: &carbide_redfish::nv_redfish::Error,
+    password: &str,
+) {
     use carbide_redfish::nv_redfish::{BmcError, Error};
 
     if let Error::Bmc(BmcError::InvalidResponse { url, status, text }) = err {
+        let error_message = redact_nv_redfish_response(text, password);
         tracing::warn!(
             backend = "nv-redfish",
             context,
             url = %url,
             error_code = status.as_u16(),
-            error_message = %text,
+            error_message = %error_message,
             "external call failed"
         );
     }
@@ -1630,6 +1645,7 @@ fn log_nv_redfish_http_failure(context: &str, err: &carbide_redfish::nv_redfish:
 
 fn map_nv_redfish_explore_error(
     err: bmc_explorer::Error<carbide_redfish::nv_redfish::RedfishBmc>,
+    password: &str,
 ) -> EndpointExplorationError {
     type BmcError = carbide_redfish::nv_redfish::BmcError;
     use carbide_redfish::nv_redfish::Error;
@@ -1652,12 +1668,13 @@ fn map_nv_redfish_explore_error(
                     }
                 }
                 BmcError::InvalidResponse { url, status, text } => {
+                    let error_message = redact_nv_redfish_response(&text, password);
                     tracing::warn!(
                         backend = "nv-redfish",
                         context = %context,
                         url = %url,
                         error_code = status.as_u16(),
-                        error_message = %text,
+                        error_message = %error_message,
                         "external call failed"
                     );
                     match status {
@@ -1736,8 +1753,9 @@ mod tests {
 
     use super::{
         BootInterfaceTarget, EndpointExplorationError, MachineSetupStatus, RedfishClient,
-        fetch_machine_setup_status, log_nv_redfish_http_failure, nv_bmc_explore_config,
-        record_evaluated_boot_interface, should_fetch_network_adapter_ports,
+        fetch_machine_setup_status, log_nv_redfish_http_failure, map_nv_redfish_explore_error,
+        nv_bmc_explore_config, record_evaluated_boot_interface, redact_nv_redfish_response,
+        should_fetch_network_adapter_ports,
     };
 
     fn test_addr() -> SocketAddr {
@@ -1757,11 +1775,11 @@ mod tests {
         let error: carbide_redfish::nv_redfish::Error = Error::Bmc(BmcError::InvalidResponse {
             url: "https://bmc.example/redfish/v1/".parse().expect("URL"),
             status: http::StatusCode::BAD_GATEWAY,
-            text: "service unavailable".to_string(),
+            text: "request with super-secret failed".to_string(),
         });
 
         let logs = carbide_instrument::testing::capture_logs(|| {
-            log_nv_redfish_http_failure("service root", &error);
+            log_nv_redfish_http_failure("service root", &error, "super-secret");
         });
 
         assert_eq!(logs.len(), 1);
@@ -1776,8 +1794,50 @@ mod tests {
         assert_eq!(failed_call.field("error_code"), Some("502"));
         assert_eq!(
             failed_call.field("error_message"),
-            Some("service unavailable")
+            Some("request with REDACTED failed")
         );
+    }
+
+    #[test]
+    fn empty_password_does_not_garble_nv_redfish_response() {
+        assert_eq!(
+            redact_nv_redfish_response("service unavailable", ""),
+            "service unavailable"
+        );
+    }
+
+    #[test]
+    fn mapped_http_failure_redacts_log_without_changing_returned_body() {
+        use carbide_redfish::nv_redfish::{BmcError, Error, RedfishBmc};
+
+        let error: bmc_explorer::Error<RedfishBmc> = bmc_explorer::Error::NvRedfish {
+            context: "query systems",
+            err: Error::Bmc(BmcError::InvalidResponse {
+                url: "https://bmc.example/redfish/v1/Systems"
+                    .parse()
+                    .expect("URL"),
+                status: http::StatusCode::BAD_REQUEST,
+                text: "request with super-secret failed".to_string(),
+            }),
+        };
+        let mut mapped = None;
+
+        let logs = carbide_instrument::testing::capture_logs(|| {
+            mapped = Some(map_nv_redfish_explore_error(error, "super-secret"));
+        });
+
+        assert_eq!(logs.len(), 1);
+        assert_eq!(
+            logs[0].field("error_message"),
+            Some("request with REDACTED failed")
+        );
+        assert!(matches!(
+            mapped,
+            Some(EndpointExplorationError::RedfishError {
+                response_body: Some(body),
+                ..
+            }) if body == "request with super-secret failed"
+        ));
     }
 
     #[tokio::test]
