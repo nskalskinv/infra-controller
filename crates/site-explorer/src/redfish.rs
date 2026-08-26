@@ -1619,7 +1619,13 @@ fn redact_nv_redfish_response(text: &str, password: &str) -> String {
     if password.is_empty() {
         text.to_string()
     } else {
-        text.replace(password, "REDACTED")
+        let serialized = serde_json::to_string(password).expect("serializing a string cannot fail");
+        let json_escaped = serialized
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .expect("a serialized string is enclosed in quotes");
+        text.replace(json_escaped, "REDACTED")
+            .replace(password, "REDACTED")
     }
 }
 
@@ -1803,6 +1809,20 @@ mod tests {
         assert_eq!(
             redact_nv_redfish_response("service unavailable", ""),
             "service unavailable"
+        );
+    }
+
+    #[test]
+    fn json_escaped_password_is_redacted_from_nv_redfish_response() {
+        let password = "super\"secret\\value";
+        let response = serde_json::json!({
+            "error": format!("request with {password} failed")
+        })
+        .to_string();
+
+        assert_eq!(
+            redact_nv_redfish_response(&response, password),
+            r#"{"error":"request with REDACTED failed"}"#
         );
     }
 
