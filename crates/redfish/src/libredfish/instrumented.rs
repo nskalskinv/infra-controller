@@ -135,7 +135,27 @@ async fn instrumented_redfish<T>(
     if let Err(error) = &result
         && !matches!(error, RedfishError::NotSupported(_))
     {
-        tracing::warn!(backend = REDFISH_BACKEND, operation, error = %error, "external call failed");
+        match error {
+            RedfishError::HTTPErrorCode {
+                url,
+                status_code,
+                response_body,
+            } => tracing::warn!(
+                backend = REDFISH_BACKEND,
+                operation,
+                error = %error,
+                url = %url,
+                error_code = status_code.as_u16(),
+                error_message = %response_body,
+                "external call failed"
+            ),
+            _ => tracing::warn!(
+                backend = REDFISH_BACKEND,
+                operation,
+                error = %error,
+                "external call failed"
+            ),
+        }
     }
     result
 }
@@ -516,8 +536,10 @@ mod tests {
 
                 instrumented_redfish::<()>(
                     "lockdown_status",
-                    std::future::ready(Err(RedfishError::GenericError {
-                        error: "boom".to_string(),
+                    std::future::ready(Err(RedfishError::HTTPErrorCode {
+                        url: "https://bmc.example/redfish/v1/Systems/1".to_string(),
+                        status_code: http::StatusCode::BAD_REQUEST,
+                        response_body: "invalid boot override".to_string(),
                     })),
                 )
                 .await
@@ -531,6 +553,19 @@ mod tests {
                 .count(),
             1,
             "only the genuine failure warns; unsupported stays quiet, got {logs:?}",
+        );
+        let failed_call = logs
+            .iter()
+            .find(|log| log.message == "external call failed")
+            .expect("the genuine failure emits a warning");
+        assert_eq!(
+            failed_call.field("url"),
+            Some("https://bmc.example/redfish/v1/Systems/1")
+        );
+        assert_eq!(failed_call.field("error_code"), Some("400"));
+        assert_eq!(
+            failed_call.field("error_message"),
+            Some("invalid boot override")
         );
         assert_eq!(
             metrics.histogram_count_delta(

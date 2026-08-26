@@ -1634,6 +1634,14 @@ fn map_nv_redfish_explore_error(
                     }
                 }
                 BmcError::InvalidResponse { url, status, text } => {
+                    tracing::warn!(
+                        backend = "nv-redfish",
+                        context = %context,
+                        url = %url,
+                        error_code = status.as_u16(),
+                        error_message = %text,
+                        "external call failed"
+                    );
                     match status {
                         // Disclaimer: this is original libredfish code...
                         http::StatusCode::FORBIDDEN
