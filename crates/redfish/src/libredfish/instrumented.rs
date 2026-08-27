@@ -155,7 +155,8 @@ async fn instrumented_redfish_with_passwords<T, const N: usize>(
                     backend = REDFISH_BACKEND,
                     operation,
                     url = %url,
-                    error_code = status_code.as_u16(),
+                    http_status = status_code.as_u16(),
+                    error = %error_message,
                     error_message = %error_message,
                     "external call failed"
                 );
@@ -596,7 +597,9 @@ mod tests {
             failed_call.field("url"),
             Some("https://bmc.example/redfish/v1/Systems/1")
         );
-        assert_eq!(failed_call.field("error_code"), Some("400"));
+        assert_eq!(failed_call.field("http_status"), Some("400"));
+        assert_eq!(failed_call.field("error_code"), None);
+        assert_eq!(failed_call.field("error"), Some("invalid boot override"));
         assert_eq!(
             failed_call.field("error_message"),
             Some("invalid boot override")
@@ -628,6 +631,7 @@ mod tests {
     #[test]
     fn http_failure_log_redacts_extended_info_and_preserves_returned_body() {
         const PASSWORD: &str = "päss/🔑";
+        const ENCODED_PASSWORD: &str = r"p\u00e4ss\/\uD83D\uDD11";
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -660,16 +664,29 @@ mod tests {
         });
 
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].field("error"), None);
         assert_eq!(
             logs[0].field("url"),
             Some("https://bmc.example/redfish/v1/AccountService/Accounts/1")
         );
-        assert_eq!(logs[0].field("error_code"), Some("400"));
+        assert_eq!(logs[0].field("http_status"), Some("400"));
+        assert_eq!(logs[0].field("error_code"), None);
+        assert_eq!(logs[0].field("error"), Some("password REDACTED rejected"));
         assert_eq!(
             logs[0].field("error_message"),
             Some("password REDACTED rejected")
         );
+        for field in ["error", "error_message"] {
+            let logged = logs[0].field(field).expect("the field is present");
+            assert!(!logged.contains(PASSWORD), "{field} leaked the password");
+            assert!(
+                !logged.contains(ENCODED_PASSWORD),
+                "{field} leaked the JSON-escaped password"
+            );
+            assert!(
+                !logged.contains("fallback message"),
+                "{field} leaked unpreferred response content"
+            );
+        }
         assert!(matches!(
             returned_error,
             Some(RedfishError::HTTPErrorCode {

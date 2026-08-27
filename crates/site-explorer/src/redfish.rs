@@ -1630,7 +1630,8 @@ fn log_nv_redfish_http_failure(
             backend = "nv-redfish",
             context,
             url = %url,
-            error_code = status.as_u16(),
+            http_status = status.as_u16(),
+            error = %error_message,
             error_message = %error_message,
             "external call failed"
         );
@@ -1667,7 +1668,8 @@ fn map_nv_redfish_explore_error(
                         backend = "nv-redfish",
                         context = %context,
                         url = %url,
-                        error_code = status.as_u16(),
+                        http_status = status.as_u16(),
+                        error = %error_message,
                         error_message = %error_message,
                         "external call failed"
                     );
@@ -1786,19 +1788,27 @@ mod tests {
             failed_call.field("url"),
             Some("https://bmc.example/redfish/v1/")
         );
-        assert_eq!(failed_call.field("error_code"), Some("502"));
-        let error_message = failed_call
-            .field("error_message")
-            .expect("failure warning has an error message");
-        assert_eq!(error_message, "<unrecognized Redfish error response>");
-        assert!(!error_message.contains(PASSWORD));
-        assert!(!error_message.contains(ENCODED_PASSWORD));
+        assert_eq!(failed_call.field("http_status"), Some("502"));
+        assert_eq!(failed_call.field("error_code"), None);
+        for field in ["error", "error_message"] {
+            let logged = failed_call
+                .field(field)
+                .unwrap_or_else(|| panic!("failure warning has {field}"));
+            assert_eq!(logged, "<unrecognized Redfish error response>");
+            assert!(!logged.contains(PASSWORD), "{field} leaked the password");
+            assert!(
+                !logged.contains(ENCODED_PASSWORD),
+                "{field} leaked the JSON-escaped password"
+            );
+        }
     }
 
     #[test]
     fn mapped_http_failure_redacts_log_without_changing_returned_body() {
         use carbide_redfish::nv_redfish::{BmcError, Error, RedfishBmc};
 
+        const PASSWORD: &str = "päss/🔑";
+        const ENCODED_PASSWORD: &str = r"p\u00e4ss\/\uD83D\uDD11";
         let response_body = r#"{
             "error": {
                 "message": "fallback message",
@@ -1822,7 +1832,7 @@ mod tests {
         let mut mapped = None;
 
         let logs = carbide_instrument::testing::capture_logs(|| {
-            mapped = Some(map_nv_redfish_explore_error(error, "päss/🔑"));
+            mapped = Some(map_nv_redfish_explore_error(error, PASSWORD));
         });
 
         assert_eq!(logs.len(), 1);
@@ -1831,11 +1841,27 @@ mod tests {
             logs[0].field("url"),
             Some("https://bmc.example/redfish/v1/Systems")
         );
-        assert_eq!(logs[0].field("error_code"), Some("400"));
+        assert_eq!(logs[0].field("http_status"), Some("400"));
+        assert_eq!(logs[0].field("error_code"), None);
+        assert_eq!(logs[0].field("error"), Some("request with REDACTED failed"));
         assert_eq!(
             logs[0].field("error_message"),
             Some("request with REDACTED failed")
         );
+        for field in ["error", "error_message"] {
+            let logged = logs[0]
+                .field(field)
+                .unwrap_or_else(|| panic!("failure warning has {field}"));
+            assert!(!logged.contains(PASSWORD), "{field} leaked the password");
+            assert!(
+                !logged.contains(ENCODED_PASSWORD),
+                "{field} leaked the JSON-escaped password"
+            );
+            assert!(
+                !logged.contains("fallback message"),
+                "{field} leaked unpreferred response content"
+            );
+        }
         assert!(matches!(
             mapped,
             Some(EndpointExplorationError::RedfishError {
