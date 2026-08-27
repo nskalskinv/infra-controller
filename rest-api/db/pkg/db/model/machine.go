@@ -287,6 +287,7 @@ type MachineFilterInput struct {
 	Statuses                  []string
 	SearchQuery               *string
 	MachineIDs                []string
+	MachineLabelFilters       map[string]string
 	IsMissingOnSite           *bool
 	ExcludeMetadata           bool // When true, excludes the metadata JSONB column from SELECT to improve performance on bulk queries
 }
@@ -684,11 +685,38 @@ func (msd MachineSQLDAO) setQueryWithFilter(filter MachineFilterInput, query *bu
 		query = query.Where("m.id IN (?)", bun.In(filter.MachineIDs))
 	}
 
+	// JSONB containment gives exact key/value AND semantics for the filter
+	// object and can use the machine labels GIN index.
+	if len(filter.MachineLabelFilters) > 0 {
+		labelFiltersJSON, err := json.Marshal(filter.MachineLabelFilters)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode Machine label filters: %w", err)
+		}
+		query = query.Where("m.labels @> ?::jsonb", string(labelFiltersJSON))
+		if machineDAOSpan != nil {
+			msd.tracerSpan.SetAttribute(machineDAOSpan, "machine_label_filters", string(labelFiltersJSON))
+		}
+	}
+
 	if filter.ExcludeMetadata {
 		query = query.ExcludeColumn("metadata")
 	}
 
 	return query, nil
+}
+
+// MatchesLabelFilters reports whether all requested label key/value pairs are
+// present on the Machine. An empty filter matches every Machine.
+func (m *Machine) MatchesLabelFilters(filters map[string]string) bool {
+	if m == nil {
+		return false
+	}
+	for key, value := range filters {
+		if actual, ok := m.Labels[key]; !ok || actual != value {
+			return false
+		}
+	}
+	return true
 }
 
 // GetAll returns all Machines based on the filter and paging

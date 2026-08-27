@@ -471,6 +471,8 @@ func (cih CreateInstanceHandler) Handle(c echo.Context) error {
 		logger.Warn().Err(verr).Msg("error validating Instance creation request data")
 		return cutil.NewAPIErrorResponse(c, http.StatusBadRequest, "Error validating Instance creation request data", verr)
 	}
+	logger.Info().Interface("MachineLabelFilters", apiRequest.MachineLabelFilters).
+		Msg("validated Instance creation placement filters")
 
 	// Validate the tenant for which this Instance is being created
 	tenant, err := common.GetTenantForOrg(ctx, nil, cih.dbSession, org)
@@ -1131,7 +1133,7 @@ func (cih CreateInstanceHandler) Handle(c echo.Context) error {
 			}
 
 			// Retrieve Machine by ID
-			machine, err = mDAO.GetByID(ctx, nil, *apiRequest.MachineID, nil, false)
+			machine, err = mDAO.GetByID(ctx, tx, *apiRequest.MachineID, nil, true)
 			if err != nil {
 				if err == cdb.ErrDoesNotExist {
 					return cutil.NewAPIError(http.StatusBadRequest, "Could not find Machine with ID specified in request data", nil)
@@ -1144,6 +1146,14 @@ func (cih CreateInstanceHandler) Handle(c echo.Context) error {
 			if machine.SiteID != site.ID {
 				logger.Warn().Msg("Machine specified in request is not part of the site")
 				return cutil.NewAPIError(http.StatusBadRequest, fmt.Sprintf("Machine specified in request does not belong to Site: %s", site.Name), nil)
+			}
+
+			if !machine.MatchesLabelFilters(apiRequest.MachineLabelFilters) {
+				logger.Warn().Str("MachineID", machine.ID).
+					Interface("MachineLabelFilters", apiRequest.MachineLabelFilters).
+					Msg("Machine specified in request does not match Machine label filters")
+				return cutil.NewAPIError(http.StatusBadRequest,
+					"Machine specified in request does not match machineLabelFilters", nil)
 			}
 
 			// Validate Machine availability. Note: allowUnhealthyMachine also bypasses
@@ -1319,6 +1329,9 @@ func (cih CreateInstanceHandler) Handle(c echo.Context) error {
 		} // if apiRequest.InstanceTypeID != nil
 
 		// NOTE: At this stage, we have a Machine ID whether it was provided in request or selected through Instance Type
+		logger.Info().Str("MachineID", machine.ID).
+			Interface("MachineLabelFilters", apiRequest.MachineLabelFilters).
+			Msg("selected Machine for Instance creation")
 
 		mcDAO := cdbm.NewMachineCapabilityDAO(cih.dbSession)
 

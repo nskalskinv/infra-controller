@@ -352,7 +352,10 @@ func (bcih BatchCreateInstanceHandler) Handle(c echo.Context) error {
 		topologyOptimized = *apiRequest.TopologyOptimized
 	}
 
-	logger.Info().Int("Count", apiRequest.Count).Bool("TopologyOptimized", topologyOptimized).Msg("Input validation completed for batch Instance creation request")
+	logger.Info().Int("Count", apiRequest.Count).
+		Bool("TopologyOptimized", topologyOptimized).
+		Interface("MachineLabelFilters", apiRequest.MachineLabelFilters).
+		Msg("Input validation completed for batch Instance creation request")
 
 	// Validate the tenant for which these Instances are being created
 	tenant, err := common.GetTenantForOrg(ctx, nil, bcih.dbSession, org)
@@ -1318,7 +1321,7 @@ func (bcih BatchCreateInstanceHandler) Handle(c echo.Context) error {
 		}
 
 		// Allocate machines with topology optimization
-		machines, apiErr := allocateMachinesForBatch(ctx, tx, bcih.dbSession, instancetype, apiRequest.Count, topologyOptimized, logger)
+		machines, apiErr := allocateMachinesForBatch(ctx, tx, bcih.dbSession, instancetype, apiRequest.Count, topologyOptimized, apiRequest.MachineLabelFilters, logger)
 		if apiErr != nil {
 			return apiErr
 		}
@@ -1860,6 +1863,7 @@ func allocateMachinesForBatch(
 	instancetype *cdbm.InstanceType,
 	count int,
 	topologyOptimized bool,
+	machineLabelFilters map[string]string,
 	logger zerolog.Logger,
 ) ([]cdbm.Machine, *cutil.APIError) {
 	if instancetype == nil || count <= 0 {
@@ -1874,9 +1878,10 @@ func allocateMachinesForBatch(
 
 	// Get all available Machines for the Instance Type
 	filterInput := cdbm.MachineFilterInput{
-		InstanceTypeIDs: []uuid.UUID{instancetype.ID},
-		IsAssigned:      cutil.GetPtr(false),
-		Statuses:        []string{cdbm.MachineStatusReady},
+		InstanceTypeIDs:     []uuid.UUID{instancetype.ID},
+		IsAssigned:          cutil.GetPtr(false),
+		Statuses:            []string{cdbm.MachineStatusReady},
+		MachineLabelFilters: machineLabelFilters,
 	}
 	machines, _, err := mcDAO.GetAll(ctx, tx, filterInput, cdbp.PageInput{Limit: cutil.GetPtr(cdbp.TotalLimit)}, nil)
 	if err != nil {
@@ -1966,7 +1971,7 @@ func allocateMachinesForBatch(
 		}
 
 		// Re-obtain the Machine record to ensure it is still available
-		umc, err := mcDAO.GetByID(ctx, tx, mc.ID, nil, false)
+		umc, err := mcDAO.GetByID(ctx, tx, mc.ID, nil, true)
 		if err != nil {
 			continue
 		}
@@ -1976,6 +1981,10 @@ func allocateMachinesForBatch(
 		}
 
 		if umc.IsAssigned {
+			continue
+		}
+
+		if !umc.MatchesLabelFilters(machineLabelFilters) {
 			continue
 		}
 
@@ -2009,6 +2018,7 @@ func allocateMachinesForBatch(
 		nvlinkDomainDistribution[domainID]++
 	}
 	logger.Info().Interface("nvlinkDomainDistribution", nvlinkDomainDistribution).
+		Interface("MachineLabelFilters", machineLabelFilters).
 		Bool("topologyOptimized", topologyOptimized).
 		Int("nvlinkDomainCount", len(nvlinkDomainDistribution)).
 		Int("machinesAllocated", len(allocatedMachines)).

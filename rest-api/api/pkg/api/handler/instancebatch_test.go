@@ -25,6 +25,7 @@ import (
 	corev1 "github.com/NVIDIA/infra-controller/rest-api/proto/core/gen/v1"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -58,6 +59,77 @@ func testBatchBuildMachineWithNVLinkDomain(t *testing.T, dbSession *cdb.Session,
 	_, err := dbSession.DB.NewUpdate().Model(mc).Column("metadata").Where("id = ?", mc.ID).Exec(context.Background())
 	assert.Nil(t, err)
 	return mc
+}
+
+func TestAllocateMachinesForBatch(t *testing.T) {
+	dbSession := testBatchInstanceInitDB(t)
+	defer dbSession.Close()
+	common.TestSetupSchema(t, dbSession)
+
+	ctx := context.Background()
+	providerOrg := "test-label-filter-provider"
+	providerUser := testInstanceBuildUser(t, dbSession, "test-label-filter-user", providerOrg, []string{authz.ProviderAdminRole})
+	provider := testInstanceSiteBuildInfrastructureProvider(t, dbSession, "test-label-filter-provider", providerOrg, providerUser)
+	site := testInstanceBuildSite(t, dbSession, provider, "test-label-filter-site", cdbm.SiteStatusRegistered, true, providerUser)
+	instanceType := testInstanceBuildInstanceType(t, dbSession, provider, "test-label-filter-type", site, cdbm.InstanceStatusReady)
+
+	for i, failureDomain := range []string{"fd-a", "fd-a", "fd-b"} {
+		machine := testBatchBuildMachineWithNVLinkDomain(t, dbSession, provider.ID, site.ID, "nvlink-domain-1")
+		machine.Labels = map[string]string{
+			"failure-domain": failureDomain,
+			"power-domain":   fmt.Sprintf("pd-%d", i),
+		}
+		_, err := cdbm.NewMachineDAO(dbSession).Update(ctx, nil, cdbm.MachineUpdateInput{
+			MachineID: machine.ID,
+			Labels:    machine.Labels,
+		})
+		require.NoError(t, err)
+		testInstanceBuildMachineInstanceType(t, dbSession, machine, instanceType)
+	}
+
+	tests := []struct {
+		name                string
+		machineLabelFilters map[string]string
+		wantStatus          int
+		wantFailureDomain   string
+	}{
+		{
+			name:                "insufficient matching capacity",
+			machineLabelFilters: map[string]string{"failure-domain": "missing"},
+			wantStatus:          http.StatusConflict,
+		},
+		{
+			name:                "filters before topology optimization",
+			machineLabelFilters: map[string]string{"failure-domain": "fd-a"},
+			wantFailureDomain:   "fd-a",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tx, err := cdb.BeginTx(ctx, dbSession, nil)
+			require.NoError(t, err)
+			defer func() {
+				require.NoError(t, tx.Rollback())
+			}()
+
+			machines, apiErr := allocateMachinesForBatch(
+				ctx, tx, dbSession, instanceType, 2, true,
+				test.machineLabelFilters, zerolog.Nop(),
+			)
+			if test.wantStatus != 0 {
+				require.NotNil(t, apiErr)
+				assert.Equal(t, test.wantStatus, apiErr.Code)
+				return
+			}
+
+			require.Nil(t, apiErr)
+			require.Len(t, machines, 2)
+			for _, machine := range machines {
+				assert.Equal(t, test.wantFailureDomain, machine.Labels["failure-domain"])
+			}
+		})
+	}
 }
 
 func TestBatchCreateInstanceHandler_Handle(t *testing.T) {

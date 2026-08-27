@@ -54,6 +54,8 @@ type BatchInstanceCreateRequest struct {
 	PhoneHomeEnabled *bool `json:"phoneHomeEnabled,omitempty"`
 	// Key-value objects to be applied to all instances (shared across all instances)
 	Labels map[string]string `json:"labels,omitempty"`
+	// Optional exact-match filters applied to Machine labels during placement. Property names are arbitrary Machine label keys rather than predefined filter fields. Every supplied key/value pair must match (AND semantics). An omitted or empty object does not restrict placement. The filters constrain placement only; they are not persisted on the created Instances.  Filtering occurs before topology optimization. When `topologyOptimized` is true, all selected Machines must both match these filters and belong to the same NVLink domain. If too few matching Machines are available, the request is rejected with 409.
+	MachineLabelFilters map[string]string `json:"machineLabelFilters,omitempty"`
 	// Interface configuration shared across all instances. At least one interface must be specified unless `autoNetwork` is true. Interfaces must all be Subnet-backed or all be VPC-backed; VPC-backed interfaces may use an explicit `vpcPrefixId` or ask the Controller to select a prefix using `vpcId` and `ipFamilies`. Each batch member is resolved independently and may use a different prefix. Only one network can be attached over a physical interface. Interface `ipAddress` is not supported for batch instance creation requests. Mutually exclusive with `autoNetwork`: when `autoNetwork` is true this list MUST be empty.
 	Interfaces []InterfaceCreateRequest `json:"interfaces,omitempty"`
 	// When true, asks NICo to auto-resolve each Instance's network interfaces from the host's underlay (HostInband) network segments. Intended for instances on zero-DPU hosts (or hosts with their DPU in NIC mode). When true: (1) the target VPC's `networkVirtualizationType` MUST be `FLAT`, (2) `interfaces` MUST be empty or omitted, and (3) `secondaryVpcIds` MUST be empty or omitted.
@@ -604,6 +606,38 @@ func (o *BatchInstanceCreateRequest) SetLabels(v map[string]string) {
 	o.Labels = v
 }
 
+// GetMachineLabelFilters returns the MachineLabelFilters field value if set, zero value otherwise.
+func (o *BatchInstanceCreateRequest) GetMachineLabelFilters() map[string]string {
+	if o == nil || IsNil(o.MachineLabelFilters) {
+		var ret map[string]string
+		return ret
+	}
+	return o.MachineLabelFilters
+}
+
+// GetMachineLabelFiltersOk returns a tuple with the MachineLabelFilters field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BatchInstanceCreateRequest) GetMachineLabelFiltersOk() (map[string]string, bool) {
+	if o == nil || IsNil(o.MachineLabelFilters) {
+		return map[string]string{}, false
+	}
+	return o.MachineLabelFilters, true
+}
+
+// HasMachineLabelFilters returns a boolean if a field has been set.
+func (o *BatchInstanceCreateRequest) HasMachineLabelFilters() bool {
+	if o != nil && !IsNil(o.MachineLabelFilters) {
+		return true
+	}
+
+	return false
+}
+
+// SetMachineLabelFilters gets a reference to the given map[string]string and assigns it to the MachineLabelFilters field.
+func (o *BatchInstanceCreateRequest) SetMachineLabelFilters(v map[string]string) {
+	o.MachineLabelFilters = v
+}
+
 // GetInterfaces returns the Interfaces field value if set, zero value otherwise.
 func (o *BatchInstanceCreateRequest) GetInterfaces() []InterfaceCreateRequest {
 	if o == nil || IsNil(o.Interfaces) {
@@ -872,6 +906,9 @@ func (o BatchInstanceCreateRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.Labels) {
 		toSerialize["labels"] = o.Labels
+	}
+	if !IsNil(o.MachineLabelFilters) {
+		toSerialize["machineLabelFilters"] = o.MachineLabelFilters
 	}
 	if !IsNil(o.Interfaces) {
 		toSerialize["interfaces"] = o.Interfaces

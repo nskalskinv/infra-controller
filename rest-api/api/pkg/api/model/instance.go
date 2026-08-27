@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/NVIDIA/infra-controller/rest-api/api/internal/config"
@@ -453,6 +454,10 @@ type APIInstanceCreateRequest struct {
 	SSHKeyGroupIDs []string `json:"sshKeyGroupIds"`
 	// Labels is a key value objects
 	Labels map[string]string `json:"labels"`
+	// MachineLabelFilters restricts automatic Machine selection, or validates a
+	// specifically requested Machine, by exact Machine label key/value matches.
+	// All entries must match.
+	MachineLabelFilters map[string]string `json:"machineLabelFilters"`
 	// NetworkSecurityGroupID is the ID if a desired
 	// NSG to attach to the instance
 	NetworkSecurityGroupID *string `json:"networkSecurityGroupId"`
@@ -516,6 +521,9 @@ type APIBatchInstanceCreateRequest struct {
 	SSHKeyGroupIDs []string `json:"sshKeyGroupIds"`
 	// Labels is a key value objects to be applied to all instances (shared across all instances)
 	Labels map[string]string `json:"labels"`
+	// MachineLabelFilters restricts Machine selection by exact Machine label
+	// key/value matches. All entries must match.
+	MachineLabelFilters map[string]string `json:"machineLabelFilters"`
 	// NetworkSecurityGroupID is the ID of a desired NSG to attach to all instances (shared across all instances)
 	NetworkSecurityGroupID *string `json:"networkSecurityGroupId"`
 	// TopologyOptimized indicates whether to enforce rack-aware placement
@@ -625,7 +633,12 @@ func (icr APIInstanceCreateRequest) Validate() error {
 		}
 	}
 
-	if err := util.ValidateLabels(icr.Labels); err != nil {
+	err = util.ValidateLabels(icr.Labels)
+	if err != nil {
+		return err
+	}
+	err = validateMachineLabelFilters(icr.MachineLabelFilters)
+	if err != nil {
 		return err
 	}
 
@@ -998,12 +1011,45 @@ func (bicr APIBatchInstanceCreateRequest) Validate() error {
 		}
 	}
 
-	if err := util.ValidateLabels(bicr.Labels); err != nil {
+	err = util.ValidateLabels(bicr.Labels)
+	if err != nil {
+		return err
+	}
+	err = validateMachineLabelFilters(bicr.MachineLabelFilters)
+	if err != nil {
 		return err
 	}
 
 	// err should be nil at this point
 	return err
+}
+
+// validateMachineLabelFilters applies the shared label-map contract while
+// reporting validation errors against the public request field.
+func validateMachineLabelFilters(filters map[string]string) error {
+	err := util.ValidateLabels(filters)
+	if err == nil {
+		for key, value := range filters {
+			if strings.ContainsRune(key, '\x00') || strings.ContainsRune(value, '\x00') {
+				return validation.Errors{
+					"machineLabelFilters": errors.New("machine label filter keys and values must not contain NUL characters"),
+				}
+			}
+		}
+		return nil
+	}
+
+	labelErrors, ok := err.(validation.Errors)
+	if !ok {
+		return validation.Errors{"machineLabelFilters": err}
+	}
+
+	labelErr, found := labelErrors["labels"]
+	if !found {
+		return validation.Errors{"machineLabelFilters": err}
+	}
+
+	return validation.Errors{"machineLabelFilters": labelErr}
 }
 
 // ValidateForVpc validates request fields whose legality depends on the

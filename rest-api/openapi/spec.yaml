@@ -21561,6 +21561,8 @@ components:
           labels:
             region: portland
             env: staging
+          machineLabelFilters:
+            custom-machine-label: required-value
           interfaces:
             - subnetId: 1f232bf0-7b90-456e-b9b0-38d9fea4171a
               isPhysical: false
@@ -21728,6 +21730,12 @@ components:
         labels:
           $ref: '#/components/schemas/Labels'
           description: 'User-defined key-value labels'
+        machineLabelFilters:
+          $ref: '#/components/schemas/MachineLabelFilters'
+          description: |-
+            Optional exact-match filters applied to Machine labels during placement. Property names are arbitrary Machine label keys rather than predefined filter fields. Every supplied key/value pair must match (AND semantics). An omitted or empty object does not restrict placement.
+
+            When `instanceTypeId` is supplied, NICo selects from Ready, unassigned Machines of that Instance Type that match all filters. When `machineId` is supplied, the specified Machine must match all filters or the request is rejected with 400. The filters constrain placement only; they are not persisted on the created Instance.
         interfaces:
           type: array
           description: 'At least one interface must be specified unless `autoNetwork` is true. Interfaces must all be Subnet-backed or all be VPC-backed; VPC-backed interfaces may use an explicit `vpcPrefixId` or ask the Controller to select a prefix using `vpcId` and `ipFamilies`. Only one network can be attached over a physical interface. If only one Subnet is specified, it will be attached over a physical interface regardless of `isPhysical`. Mutually exclusive with `autoNetwork`: when `autoNetwork` is true this list MUST be empty.'
@@ -21780,6 +21788,8 @@ components:
           labels:
             workload: training
             env: production
+          machineLabelFilters:
+            custom-machine-label: required-value
           interfaces:
             - subnetId: 1f232bf0-7b90-456e-b9b0-38d9fea4171a
               isPhysical: true
@@ -21884,6 +21894,12 @@ components:
         labels:
           $ref: '#/components/schemas/Labels'
           description: 'Key-value objects to be applied to all instances (shared across all instances)'
+        machineLabelFilters:
+          $ref: '#/components/schemas/MachineLabelFilters'
+          description: |-
+            Optional exact-match filters applied to Machine labels during placement. Property names are arbitrary Machine label keys rather than predefined filter fields. Every supplied key/value pair must match (AND semantics). An omitted or empty object does not restrict placement. The filters constrain placement only; they are not persisted on the created Instances.
+
+            Filtering occurs before topology optimization. When `topologyOptimized` is true, all selected Machines must both match these filters and belong to the same NVLink domain. If too few matching Machines are available, the request is rejected with 409.
         interfaces:
           type: array
           description: 'Interface configuration shared across all instances. At least one interface must be specified unless `autoNetwork` is true. Interfaces must all be Subnet-backed or all be VPC-backed; VPC-backed interfaces may use an explicit `vpcPrefixId` or ask the Controller to select a prefix using `vpcId` and `ipFamilies`. Each batch member is resolved independently and may use a different prefix. Only one network can be attached over a physical interface. Interface `ipAddress` is not supported for batch instance creation requests. Mutually exclusive with `autoNetwork`: when `autoNetwork` is true this list MUST be empty.'
@@ -29119,6 +29135,21 @@ components:
       maxProperties: 10
       additionalProperties:
         type: string
+    MachineLabelFilters:
+      title: Machine Label Filters
+      type: object
+      maxProperties: 10
+      propertyNames:
+        minLength: 1
+        maxLength: 255
+        pattern: '^[^\u0000]*[^\s\u0000][^\u0000]*$'
+      additionalProperties:
+        type: string
+        maxLength: 255
+        pattern: '^[^\u0000]*$'
+      description: Property names are arbitrary Machine label keys supplied by the caller; there is no predefined set of filter fields. Keys must not be empty or whitespace-only. Keys and values may contain at most 255 characters and must not contain NUL characters.
+      examples:
+        - custom-machine-label: required-value
     MachineGPUStats:
       title: MachineGPUStats
       description: GPU summary stats for a single GPU type across machines at a site

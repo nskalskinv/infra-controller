@@ -54,6 +54,8 @@ type InstanceCreateRequest struct {
 	PhoneHomeEnabled *bool `json:"phoneHomeEnabled,omitempty"`
 	// User-defined key-value labels
 	Labels map[string]string `json:"labels,omitempty"`
+	// Optional exact-match filters applied to Machine labels during placement. Property names are arbitrary Machine label keys rather than predefined filter fields. Every supplied key/value pair must match (AND semantics). An omitted or empty object does not restrict placement.  When `instanceTypeId` is supplied, NICo selects from Ready, unassigned Machines of that Instance Type that match all filters. When `machineId` is supplied, the specified Machine must match all filters or the request is rejected with 400. The filters constrain placement only; they are not persisted on the created Instance.
+	MachineLabelFilters map[string]string `json:"machineLabelFilters,omitempty"`
 	// At least one interface must be specified unless `autoNetwork` is true. Interfaces must all be Subnet-backed or all be VPC-backed; VPC-backed interfaces may use an explicit `vpcPrefixId` or ask the Controller to select a prefix using `vpcId` and `ipFamilies`. Only one network can be attached over a physical interface. If only one Subnet is specified, it will be attached over a physical interface regardless of `isPhysical`. Mutually exclusive with `autoNetwork`: when `autoNetwork` is true this list MUST be empty.
 	Interfaces []InterfaceCreateRequest `json:"interfaces,omitempty"`
 	// When true, asks NICo to auto-resolve the Instance's network interfaces from the host's underlay (HostInband) network segments. Intended for instances on zero-DPU hosts (or hosts with their DPU in NIC mode). When true: (1) the target VPC's `networkVirtualizationType` MUST be `FLAT`, (2) `interfaces` MUST be empty or omitted, and (3) `secondaryVpcIds` MUST be empty or omitted. Resolved interfaces surface on the Instance's read response.
@@ -636,6 +638,38 @@ func (o *InstanceCreateRequest) SetLabels(v map[string]string) {
 	o.Labels = v
 }
 
+// GetMachineLabelFilters returns the MachineLabelFilters field value if set, zero value otherwise.
+func (o *InstanceCreateRequest) GetMachineLabelFilters() map[string]string {
+	if o == nil || IsNil(o.MachineLabelFilters) {
+		var ret map[string]string
+		return ret
+	}
+	return o.MachineLabelFilters
+}
+
+// GetMachineLabelFiltersOk returns a tuple with the MachineLabelFilters field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *InstanceCreateRequest) GetMachineLabelFiltersOk() (map[string]string, bool) {
+	if o == nil || IsNil(o.MachineLabelFilters) {
+		return map[string]string{}, false
+	}
+	return o.MachineLabelFilters, true
+}
+
+// HasMachineLabelFilters returns a boolean if a field has been set.
+func (o *InstanceCreateRequest) HasMachineLabelFilters() bool {
+	if o != nil && !IsNil(o.MachineLabelFilters) {
+		return true
+	}
+
+	return false
+}
+
+// SetMachineLabelFilters gets a reference to the given map[string]string and assigns it to the MachineLabelFilters field.
+func (o *InstanceCreateRequest) SetMachineLabelFilters(v map[string]string) {
+	o.MachineLabelFilters = v
+}
+
 // GetInterfaces returns the Interfaces field value if set, zero value otherwise.
 func (o *InstanceCreateRequest) GetInterfaces() []InterfaceCreateRequest {
 	if o == nil || IsNil(o.Interfaces) {
@@ -908,6 +942,9 @@ func (o InstanceCreateRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.Labels) {
 		toSerialize["labels"] = o.Labels
+	}
+	if !IsNil(o.MachineLabelFilters) {
+		toSerialize["machineLabelFilters"] = o.MachineLabelFilters
 	}
 	if !IsNil(o.Interfaces) {
 		toSerialize["interfaces"] = o.Interfaces
