@@ -837,7 +837,8 @@ ufm_auth_by_fabric:
     password: "<UFM bearer token>"
 ```
 
-The `ufm_auth_by_fabric` key must match the name in `[ib_fabrics.<name>]`.
+The child key under `ufm_auth_by_fabric` (for example, `default`) must match the
+fabric name in `[ib_fabrics.<name>]`.
 `username` is required by the shared credential-file schema but UFM does not
 use it. NICo sends `password` as the UFM bearer token. JSON has the equivalent
 object shape.

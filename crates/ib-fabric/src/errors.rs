@@ -35,6 +35,7 @@ pub enum IbError {
     },
     #[error("argument is invalid: {0}")]
     InvalidArgument(String),
+    /// An authoritative local UFM credential source is missing or invalid.
     #[error("credential configuration error: {0}")]
     CredentialConfigurationError(String),
     #[error("the function is not implemented")]

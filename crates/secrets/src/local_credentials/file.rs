@@ -264,9 +264,16 @@ impl FileCredentialsWatcher {
         }
 
         let parsed = serde_yaml::from_slice::<CredentialSnapshot>(&content).map_err(|err| {
-            SecretsError::GenericError(eyre::eyre!(
-                "failed to parse static credential file as JSON or YAML: {err}"
-            ))
+            let message = match err.location() {
+                Some(location) => format!(
+                    "failed to parse static credential file as JSON or YAML at line {}, column {}; parse details redacted",
+                    location.line(),
+                    location.column()
+                ),
+                None => "failed to parse static credential file as JSON or YAML; parse details redacted"
+                    .to_string(),
+            };
+            SecretsError::GenericError(eyre::eyre!(message))
         })?;
         Ok(parsed)
     }
@@ -432,12 +439,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_initial_file_returns_error() {
+    async fn invalid_initial_file_error_redacts_scalar_values() {
         let dir = tempdir().expect("create temp dir");
         let file_path = dir.path().join("credentials.yaml");
-        tokio::fs::write(&file_path, "invalid: [")
-            .await
-            .expect("write invalid credentials file");
+        let credential_fragment = "credential-fragment-987654321";
+        tokio::fs::write(
+            &file_path,
+            format!(
+                "mqtt_auth_by_credential_type:\n  {credential_fragment}:\n    username: mqtt-user\n    password: mqtt-password\n"
+            ),
+        )
+        .await
+        .expect("write invalid credentials file");
 
         let error = FileCredentialsWatcher::new(FileCredentialsConfig {
             path: Some(file_path),
@@ -447,7 +460,10 @@ mod tests {
         .err()
         .expect("invalid initial file must fail");
 
-        assert!(error.to_string().contains("failed to parse"));
+        let message = error.to_string();
+        assert!(message.contains("failed to parse"));
+        assert!(message.contains("parse details redacted"));
+        assert!(!message.contains(credential_fragment));
     }
 
     #[tokio::test]

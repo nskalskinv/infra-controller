@@ -275,9 +275,9 @@ spec:
         {{- if .Values.credentials.file.existingSecret.name }}
         - name: credentials-file
           secret:
-            secretName: {{ .Values.credentials.file.existingSecret.name }}
+            secretName: {{ .Values.credentials.file.existingSecret.name | quote }}
             items:
-              - key: {{ required "nico-api.credentials.file.existingSecret.key is required when credentials.file.existingSecret.name is set" .Values.credentials.file.existingSecret.key }}
+              - key: {{ required "nico-api.credentials.file.existingSecret.key is required when credentials.file.existingSecret.name is set" .Values.credentials.file.existingSecret.key | quote }}
                 path: credentials.yaml
         {{- end }}
         - name: persistence
