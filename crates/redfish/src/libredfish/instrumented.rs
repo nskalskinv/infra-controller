@@ -69,6 +69,8 @@ use libredfish::{
     SystemPowerControl,
 };
 
+use crate::libredfish::redfish_error_message_for_log;
+
 use super::redact_password;
 
 /// The `backend` label every Redfish external call records under.
@@ -119,6 +121,14 @@ async fn instrumented_redfish<T>(
     operation: &'static str,
     call: impl Future<Output = Result<T, RedfishError>>,
 ) -> Result<T, RedfishError> {
+    instrumented_redfish_with_passwords(operation, [], call).await
+}
+
+async fn instrumented_redfish_with_passwords<T, const N: usize>(
+    operation: &'static str,
+    passwords: [&str; N],
+    call: impl Future<Output = Result<T, RedfishError>>,
+) -> Result<T, RedfishError> {
     let started = Instant::now();
     let result = call.await;
     let outcome = match &result {
@@ -140,15 +150,17 @@ async fn instrumented_redfish<T>(
                 url,
                 status_code,
                 response_body,
-            } => tracing::warn!(
-                backend = REDFISH_BACKEND,
-                operation,
-                error = %error,
-                url = %url,
-                error_code = status_code.as_u16(),
-                error_message = %response_body,
-                "external call failed"
-            ),
+            } => {
+                let error_message = redfish_error_message_for_log(response_body, &passwords);
+                tracing::warn!(
+                    backend = REDFISH_BACKEND,
+                    operation,
+                    url = %url,
+                    error_code = status_code.as_u16(),
+                    error_message = %error_message,
+                    "external call failed"
+                );
+            }
             _ => tracing::warn!(
                 backend = REDFISH_BACKEND,
                 operation,
@@ -370,12 +382,16 @@ impl Redfish for InstrumentedRedfish {
         username: &'a str,
         new_pass: &'a str,
     ) -> RedfishFuture<'a, Result<(), RedfishError>> {
-        Box::pin(instrumented_redfish("change_password", async move {
-            self.inner
-                .change_password(username, new_pass)
-                .await
-                .map_err(|error| redact_nonempty(error, new_pass))
-        }))
+        Box::pin(instrumented_redfish_with_passwords(
+            "change_password",
+            [new_pass],
+            async move {
+                self.inner
+                    .change_password(username, new_pass)
+                    .await
+                    .map_err(|error| redact_nonempty(error, new_pass))
+            },
+        ))
     }
 
     fn change_password_by_id<'a>(
@@ -383,12 +399,16 @@ impl Redfish for InstrumentedRedfish {
         account_id: &'a str,
         new_pass: &'a str,
     ) -> RedfishFuture<'a, Result<(), RedfishError>> {
-        Box::pin(instrumented_redfish("change_password_by_id", async move {
-            self.inner
-                .change_password_by_id(account_id, new_pass)
-                .await
-                .map_err(|error| redact_nonempty(error, new_pass))
-        }))
+        Box::pin(instrumented_redfish_with_passwords(
+            "change_password_by_id",
+            [new_pass],
+            async move {
+                self.inner
+                    .change_password_by_id(account_id, new_pass)
+                    .await
+                    .map_err(|error| redact_nonempty(error, new_pass))
+            },
+        ))
     }
 
     fn create_user<'a>(
@@ -397,12 +417,16 @@ impl Redfish for InstrumentedRedfish {
         password: &'a str,
         role_id: RoleId,
     ) -> RedfishFuture<'a, Result<(), RedfishError>> {
-        Box::pin(instrumented_redfish("create_user", async move {
-            self.inner
-                .create_user(username, password, role_id)
-                .await
-                .map_err(|error| redact_nonempty(error, password))
-        }))
+        Box::pin(instrumented_redfish_with_passwords(
+            "create_user",
+            [password],
+            async move {
+                self.inner
+                    .create_user(username, password, role_id)
+                    .await
+                    .map_err(|error| redact_nonempty(error, password))
+            },
+        ))
     }
 
     fn change_uefi_password<'a>(
@@ -410,24 +434,32 @@ impl Redfish for InstrumentedRedfish {
         current_uefi_password: &'a str,
         new_uefi_password: &'a str,
     ) -> RedfishFuture<'a, Result<Option<String>, RedfishError>> {
-        Box::pin(instrumented_redfish("change_uefi_password", async move {
-            self.inner
-                .change_uefi_password(current_uefi_password, new_uefi_password)
-                .await
-                .map_err(|error| redact_both(error, current_uefi_password, new_uefi_password))
-        }))
+        Box::pin(instrumented_redfish_with_passwords(
+            "change_uefi_password",
+            [current_uefi_password, new_uefi_password],
+            async move {
+                self.inner
+                    .change_uefi_password(current_uefi_password, new_uefi_password)
+                    .await
+                    .map_err(|error| redact_both(error, current_uefi_password, new_uefi_password))
+            },
+        ))
     }
 
     fn clear_uefi_password<'a>(
         &'a self,
         current_uefi_password: &'a str,
     ) -> RedfishFuture<'a, Result<Option<String>, RedfishError>> {
-        Box::pin(instrumented_redfish("clear_uefi_password", async move {
-            self.inner
-                .clear_uefi_password(current_uefi_password)
-                .await
-                .map_err(|error| redact_nonempty(error, current_uefi_password))
-        }))
+        Box::pin(instrumented_redfish_with_passwords(
+            "clear_uefi_password",
+            [current_uefi_password],
+            async move {
+                self.inner
+                    .clear_uefi_password(current_uefi_password)
+                    .await
+                    .map_err(|error| redact_nonempty(error, current_uefi_password))
+            },
+        ))
     }
 
     // MARK: - Local capability check
@@ -539,7 +571,10 @@ mod tests {
                     std::future::ready(Err(RedfishError::HTTPErrorCode {
                         url: "https://bmc.example/redfish/v1/Systems/1".to_string(),
                         status_code: http::StatusCode::BAD_REQUEST,
-                        response_body: "invalid boot override".to_string(),
+                        response_body: r#"{
+                            "error": {"message": "invalid boot override"}
+                        }"#
+                        .to_string(),
                     })),
                 )
                 .await
@@ -589,6 +624,60 @@ mod tests {
             ),
             1,
         );
+    }
+
+    #[test]
+    fn http_failure_log_redacts_extended_info_and_preserves_returned_body() {
+        const PASSWORD: &str = "päss/🔑";
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("current-thread runtime");
+        let response_body = r#"{
+            "error": {
+                "message": "fallback message",
+                "@Message.ExtendedInfo": [{
+                    "Message": "password p\u00e4ss\/\uD83D\uDD11 rejected",
+                    "MessageArgs": ["päss/🔑"]
+                }]
+            }
+        }"#
+        .to_string();
+        let mut returned_error = None;
+
+        let logs = carbide_instrument::testing::capture_logs(|| {
+            returned_error = Some(
+                rt.block_on(instrumented_redfish_with_passwords::<(), 1>(
+                    "change_password",
+                    [PASSWORD],
+                    std::future::ready(Err(RedfishError::HTTPErrorCode {
+                        url: "https://bmc.example/redfish/v1/AccountService/Accounts/1".to_string(),
+                        status_code: http::StatusCode::BAD_REQUEST,
+                        response_body: response_body.clone(),
+                    })),
+                ))
+                .expect_err("the error still propagates"),
+            );
+        });
+
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].field("error"), None);
+        assert_eq!(
+            logs[0].field("url"),
+            Some("https://bmc.example/redfish/v1/AccountService/Accounts/1")
+        );
+        assert_eq!(logs[0].field("error_code"), Some("400"));
+        assert_eq!(
+            logs[0].field("error_message"),
+            Some("password REDACTED rejected")
+        );
+        assert!(matches!(
+            returned_error,
+            Some(RedfishError::HTTPErrorCode {
+                response_body: body,
+                ..
+            }) if body == response_body
+        ));
     }
 
     /// The containment case: one password contains the other; a naive

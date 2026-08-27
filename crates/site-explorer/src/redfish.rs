@@ -25,7 +25,9 @@ use carbide_network::deserialize_input_mac_to_address;
 use carbide_redfish::boot_interface::BootInterfaceTarget;
 use carbide_redfish::libredfish::conv::{IntoModel, bmc_vendor};
 use carbide_redfish::libredfish::dpu_bios::is_dpu_bios_attributes_not_ready;
-use carbide_redfish::libredfish::{RedfishAuth, RedfishClientCreationError, RedfishClientPool};
+use carbide_redfish::libredfish::{
+    RedfishAuth, RedfishClientCreationError, RedfishClientPool, redfish_error_message_for_log,
+};
 use carbide_redfish::nv_redfish::NvRedfishClientPool;
 use carbide_secrets::credentials::Credentials;
 use libredfish::model::ODataId;
@@ -1615,51 +1617,6 @@ fn record_evaluated_boot_interface(
     }
 }
 
-fn redact_nv_redfish_response(text: &str, password: &str) -> String {
-    if password.is_empty() {
-        text.to_string()
-    } else if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) {
-        redact_password_from_json(&mut value, password);
-        serde_json::to_string(&value).expect("serializing a JSON value cannot fail")
-    } else {
-        redact_password_from_text(text, password)
-    }
-}
-
-fn redact_password_from_json(value: &mut serde_json::Value, password: &str) {
-    match value {
-        serde_json::Value::String(text) => {
-            *text = text.replace(password, "REDACTED");
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                redact_password_from_json(value, password);
-            }
-        }
-        serde_json::Value::Object(fields) => {
-            let original = std::mem::take(fields);
-            *fields = original
-                .into_iter()
-                .map(|(key, mut value)| {
-                    redact_password_from_json(&mut value, password);
-                    (key.replace(password, "REDACTED"), value)
-                })
-                .collect();
-        }
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
-    }
-}
-
-fn redact_password_from_text(text: &str, password: &str) -> String {
-    let serialized = serde_json::to_string(password).expect("serializing a string cannot fail");
-    let json_escaped = serialized
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .expect("a serialized string is enclosed in quotes");
-    text.replace(json_escaped, "REDACTED")
-        .replace(password, "REDACTED")
-}
-
 fn log_nv_redfish_http_failure(
     context: &str,
     err: &carbide_redfish::nv_redfish::Error,
@@ -1668,7 +1625,7 @@ fn log_nv_redfish_http_failure(
     use carbide_redfish::nv_redfish::{BmcError, Error};
 
     if let Error::Bmc(BmcError::InvalidResponse { url, status, text }) = err {
-        let error_message = redact_nv_redfish_response(text, password);
+        let error_message = redfish_error_message_for_log(text, &[password]);
         tracing::warn!(
             backend = "nv-redfish",
             context,
@@ -1705,7 +1662,7 @@ fn map_nv_redfish_explore_error(
                     }
                 }
                 BmcError::InvalidResponse { url, status, text } => {
-                    let error_message = redact_nv_redfish_response(&text, password);
+                    let error_message = redfish_error_message_for_log(&text, &[password]);
                     tracing::warn!(
                         backend = "nv-redfish",
                         context = %context,
@@ -1791,8 +1748,7 @@ mod tests {
     use super::{
         BootInterfaceTarget, EndpointExplorationError, MachineSetupStatus, RedfishClient,
         fetch_machine_setup_status, log_nv_redfish_http_failure, map_nv_redfish_explore_error,
-        nv_bmc_explore_config, record_evaluated_boot_interface, redact_nv_redfish_response,
-        should_fetch_network_adapter_ports,
+        nv_bmc_explore_config, record_evaluated_boot_interface, should_fetch_network_adapter_ports,
     };
 
     fn test_addr() -> SocketAddr {
@@ -1806,17 +1762,19 @@ mod tests {
     }
 
     #[test]
-    fn service_root_http_failure_logs_structured_details() {
+    fn service_root_http_failure_uses_placeholder_for_malformed_body() {
         use carbide_redfish::nv_redfish::{BmcError, Error};
 
+        const PASSWORD: &str = "päss/🔑";
+        const ENCODED_PASSWORD: &str = r"p\u00E4ss\/\uD83d\uDd11";
         let error: carbide_redfish::nv_redfish::Error = Error::Bmc(BmcError::InvalidResponse {
             url: "https://bmc.example/redfish/v1/".parse().expect("URL"),
             status: http::StatusCode::BAD_GATEWAY,
-            text: "request with super-secret failed".to_string(),
+            text: format!("gateway returned {ENCODED_PASSWORD} in malformed data"),
         });
 
         let logs = carbide_instrument::testing::capture_logs(|| {
-            log_nv_redfish_http_failure("service root", &error, "super-secret");
+            log_nv_redfish_http_failure("service root", &error, PASSWORD);
         });
 
         assert_eq!(logs.len(), 1);
@@ -1829,32 +1787,28 @@ mod tests {
             Some("https://bmc.example/redfish/v1/")
         );
         assert_eq!(failed_call.field("error_code"), Some("502"));
-        assert_eq!(
-            failed_call.field("error_message"),
-            Some("request with REDACTED failed")
-        );
-    }
-
-    #[test]
-    fn empty_password_does_not_garble_nv_redfish_response() {
-        assert_eq!(
-            redact_nv_redfish_response("service unavailable", ""),
-            "service unavailable"
-        );
-    }
-
-    #[test]
-    fn alternate_json_password_encodings_are_redacted_from_nv_redfish_response() {
-        assert_eq!(
-            redact_nv_redfish_response(r#"{"error":"p\u00e4ss\/\uD83D\uDD11"}"#, "päss/🔑"),
-            r#"{"error":"REDACTED"}"#
-        );
+        let error_message = failed_call
+            .field("error_message")
+            .expect("failure warning has an error message");
+        assert_eq!(error_message, "<unrecognized Redfish error response>");
+        assert!(!error_message.contains(PASSWORD));
+        assert!(!error_message.contains(ENCODED_PASSWORD));
     }
 
     #[test]
     fn mapped_http_failure_redacts_log_without_changing_returned_body() {
         use carbide_redfish::nv_redfish::{BmcError, Error, RedfishBmc};
 
+        let response_body = r#"{
+            "error": {
+                "message": "fallback message",
+                "@Message.ExtendedInfo": [{
+                    "Message": "request with p\u00e4ss\/\uD83D\uDD11 failed",
+                    "MessageArgs": ["päss/🔑"]
+                }]
+            }
+        }"#
+        .to_string();
         let error: bmc_explorer::Error<RedfishBmc> = bmc_explorer::Error::NvRedfish {
             context: "query systems",
             err: Error::Bmc(BmcError::InvalidResponse {
@@ -1862,16 +1816,22 @@ mod tests {
                     .parse()
                     .expect("URL"),
                 status: http::StatusCode::BAD_REQUEST,
-                text: "request with super-secret failed".to_string(),
+                text: response_body.clone(),
             }),
         };
         let mut mapped = None;
 
         let logs = carbide_instrument::testing::capture_logs(|| {
-            mapped = Some(map_nv_redfish_explore_error(error, "super-secret"));
+            mapped = Some(map_nv_redfish_explore_error(error, "päss/🔑"));
         });
 
         assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].field("context"), Some("query systems"));
+        assert_eq!(
+            logs[0].field("url"),
+            Some("https://bmc.example/redfish/v1/Systems")
+        );
+        assert_eq!(logs[0].field("error_code"), Some("400"));
         assert_eq!(
             logs[0].field("error_message"),
             Some("request with REDACTED failed")
@@ -1881,7 +1841,7 @@ mod tests {
             Some(EndpointExplorationError::RedfishError {
                 response_body: Some(body),
                 ..
-            }) if body == "request with super-secret failed"
+            }) if body == response_body
         ));
     }
 

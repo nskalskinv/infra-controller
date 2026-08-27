@@ -633,6 +633,72 @@ pub fn redact_password(err: libredfish::RedfishError, password: &str) -> libredf
     redact_passwords(err, &[password])
 }
 
+const REDFISH_ERROR_MESSAGE_LIMIT: usize = 1024;
+const UNRECOGNIZED_REDFISH_ERROR_RESPONSE: &str = "<unrecognized Redfish error response>";
+
+/// Extracts a bounded, log-safe message from a DMTF DSP0266 Redfish error response.
+///
+/// Extended information is preferred over the top-level error message and
+/// code. Only decoded message text is returned; message arguments and the
+/// complete response body are never included. Passwords supplied by the
+/// caller are redacted after JSON decoding, malformed or unrecognized
+/// responses produce a fixed placeholder, and output is limited to 1,024
+/// UTF-8 bytes.
+pub fn redfish_error_message_for_log(response_body: &str, passwords: &[&str]) -> String {
+    let message = extract_redfish_error_message(response_body)
+        .unwrap_or_else(|| UNRECOGNIZED_REDFISH_ERROR_RESPONSE.to_string());
+    truncate_redfish_error_message(mask_all(&message, passwords))
+}
+
+fn extract_redfish_error_message(response_body: &str) -> Option<String> {
+    let response: serde_json::Value = serde_json::from_str(response_body).ok()?;
+    let error = response.get("error")?.as_object()?;
+
+    if let Some(extended_info) = error
+        .get("@Message.ExtendedInfo")
+        .and_then(serde_json::Value::as_array)
+    {
+        let messages = extended_info
+            .iter()
+            .filter_map(|entry| {
+                let entry = entry.as_object()?;
+                usable_redfish_message(entry.get("Message"))
+                    .or_else(|| usable_redfish_message(entry.get("MessageId")))
+            })
+            .collect::<Vec<_>>();
+        if !messages.is_empty() {
+            return Some(messages.join("; "));
+        }
+    }
+
+    usable_redfish_message(error.get("message"))
+        .or_else(|| usable_redfish_message(error.get("code")))
+        .map(str::to_string)
+}
+
+fn usable_redfish_message(value: Option<&serde_json::Value>) -> Option<&str> {
+    value
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+}
+
+fn truncate_redfish_error_message(mut message: String) -> String {
+    const ELLIPSIS: &str = "…";
+
+    if message.len() <= REDFISH_ERROR_MESSAGE_LIMIT {
+        return message;
+    }
+
+    let mut end = REDFISH_ERROR_MESSAGE_LIMIT - ELLIPSIS.len();
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message.truncate(end);
+    message.push_str(ELLIPSIS);
+    message
+}
+
 /// Replaces every occurrence of every non-empty needle with `REDACTED`,
 /// masking the union of all matches: where two needles' matches touch or
 /// overlap in the text (one password containing the other, or sharing a
@@ -873,6 +939,121 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn redfish_error_log_message_prefers_all_usable_extended_info() {
+        let response = r#"{
+            "error": {
+                "code": "Base.1.0.FallbackCode",
+                "message": "fallback message",
+                "@Message.ExtendedInfo": [
+                    {
+                        "Message": "first detail",
+                        "MessageId": "Base.1.0.Ignored",
+                        "MessageArgs": ["must-not-be-logged"]
+                    },
+                    {
+                        "Message": "  ",
+                        "MessageId": "Base.1.0.SecondDetail",
+                        "MessageArgs": ["also-must-not-be-logged"]
+                    },
+                    {"Message": 42}
+                ]
+            }
+        }"#;
+
+        assert_eq!(
+            redfish_error_message_for_log(response, &[]),
+            "first detail; Base.1.0.SecondDetail"
+        );
+    }
+
+    #[test]
+    fn redfish_error_log_message_falls_back_to_message_then_code() {
+        struct Case {
+            name: &'static str,
+            response: &'static str,
+            expected: &'static str,
+        }
+        let cases = [
+            Case {
+                name: "ExtendedInfo absent",
+                response: r#"{"error":{"message":"top-level message","code":"Code"}}"#,
+                expected: "top-level message",
+            },
+            Case {
+                name: "ExtendedInfo has no usable messages",
+                response: r#"{
+                    "error": {
+                        "message": "top-level message",
+                        "code": "Code",
+                        "@Message.ExtendedInfo": [{"MessageArgs":["secret"]}]
+                    }
+                }"#,
+                expected: "top-level message",
+            },
+            Case {
+                name: "message absent",
+                response: r#"{"error":{"code":"Base.1.0.CodeOnly"}}"#,
+                expected: "Base.1.0.CodeOnly",
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(
+                redfish_error_message_for_log(case.response, &[]),
+                case.expected,
+                "case: {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn redfish_error_log_message_uses_placeholder_for_unrecognized_responses() {
+        for response in [
+            "not JSON",
+            "{",
+            r#"{}"#,
+            r#"{"error":[]}"#,
+            r#"{"error":{"message":17,"code":null}}"#,
+        ] {
+            assert_eq!(
+                redfish_error_message_for_log(response, &[]),
+                UNRECOGNIZED_REDFISH_ERROR_RESPONSE,
+                "response: {response}"
+            );
+        }
+    }
+
+    #[test]
+    fn redfish_error_log_message_redacts_decoded_passwords() {
+        let response = r#"{
+            "error": {
+                "@Message.ExtendedInfo": [{
+                    "Message": "password p\u00e4ss\/\uD83D\uDD11 was rejected"
+                }]
+            }
+        }"#;
+
+        assert_eq!(
+            redfish_error_message_for_log(response, &["päss/🔑"]),
+            "password REDACTED was rejected"
+        );
+    }
+
+    #[test]
+    fn redfish_error_log_message_has_a_utf8_safe_length_limit() {
+        let response = serde_json::json!({
+            "error": {"message": "é".repeat(REDFISH_ERROR_MESSAGE_LIMIT)}
+        })
+        .to_string();
+
+        let message = redfish_error_message_for_log(&response, &[]);
+
+        assert_eq!(message.len(), REDFISH_ERROR_MESSAGE_LIMIT - 1);
+        assert!(message.ends_with('…'));
     }
 
     /// The mask covers the union of ALL matches, including a needle's
