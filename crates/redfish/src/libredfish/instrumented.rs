@@ -69,9 +69,8 @@ use libredfish::{
     SystemPowerControl,
 };
 
-use crate::libredfish::redfish_error_message_for_log;
-
 use super::redact_password;
+use crate::libredfish::redfish_error_message_for_log;
 
 /// The `backend` label every Redfish external call records under.
 pub(super) const REDFISH_BACKEND: &str = "redfish";
